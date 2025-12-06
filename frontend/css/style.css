@@ -1,0 +1,48 @@
+/* frontend/css/style.css */
+:root {
+    /* 這裡定義了整個專案的基礎顏色和邊框寬度 */
+    --pixel-black: #222;
+    --border-width: 4px;
+}
+
+* {
+    box-sizing: border-box;
+    /* 這裡可以嘗試引入一個像素字體，讓文字看起來就是像素風 */
+    font-family: monospace; 
+}
+
+body {
+    background-color: #f0f0f0; 
+    margin: 0;
+    padding: 0;
+}
+
+/* 這是所有 UI 元素都將使用的「像素邊框」樣式 */
+.pixel-border-box {
+    border: var(--border-width) solid var(--pixel-black);
+    padding: 15px;
+    background-color: white;
+    /* 關鍵：創造一個立體陰影的像素效果 */
+    box-shadow: var(--border-width) var(--border-width) 0px 0px var(--pixel-black);
+    margin-bottom: 20px;
+}
+
+/* 讓按鈕也有像素風格 */
+button {
+    border: 2px solid var(--pixel-black);
+    background-color: #eee;
+    padding: 8px 12px;
+    cursor: pointer;
+    box-shadow: 2px 2px 0px 0px var(--pixel-black);
+}
+
+button:active {
+    /* 按下去時陰影消失，模擬按鍵被壓下去的效果 */
+    transform: translate(2px, 2px);
+    box-shadow: none;
+}
+
+/* 確保圖片在縮放時保持像素感，不會變模糊 */
+.pixel-img {
+    image-rendering: pixelated; 
+}

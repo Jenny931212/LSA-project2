@@ -1,0 +1,14 @@
+# pet-detector.service
+
+[Unit]
+Description=Raspberry Pi Motion Detector Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/pet-detector/detector.py
+WorkingDirectory=/home/pi/pet-detector
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target

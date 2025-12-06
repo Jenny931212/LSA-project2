@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虛擬寵物大廳</title>
+    <link rel="stylesheet" href="./css/style.css"> 
+    <style>
+        /* -------------------- 基礎佈局 -------------------- */
+        body {
+            overflow: hidden; /* 防止滾動條出現 */
+        }
+
+        header {
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 4px solid var(--pixel-black); 
+            position: relative; 
+            z-index: 100;
+        }
+
+        .main-layout {
+            position: relative;
+            height: calc(100vh - 56px); /* 扣除 header 高度 */
+        }
+
+        /* 遊戲大廳區域 - 充滿整個畫面 */
+        #lobby-area {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden; /* 確保地圖滑動不會露出外面 */
+            border: none;
+            box-shadow: none;
+            padding: 0;
+        }
+
+        /* ✅ 世界層：地圖＋其他玩家的狗 */
+        #world-layer {
+            position: absolute;
+            width: 140%;
+            height: 140%;
+            left: 0;
+            top: 0;
+            background-image: url('./assets/lobby-background.png');
+            background-size: 100% 100%; 
+            background-repeat: no-repeat;
+            background-position: center center;
+        }
+
+        /* -------------------- 自己的寵物定位 (修正點) -------------------- */
+        /* 自己的寵物不需要移動，它永遠在畫面的中心，我們移動背景 */
+        .my-pet-fixed {
+            /* 此處可移除，因為 ID 選擇器優先級更高，但保留在 HTML 中不影響 */
+        }
+
+        /* 修改成： */
+        #my-pet {
+            position: absolute;
+            width: 96px;
+            height: 110px;
+            z-index: 50;
+            /* 不給 left/top/transform，改用 JS 來計算螢幕位置 */
+        }
+
+        /* -------------------- 漂浮 UI 元素 -------------------- */
+
+        /* 虛擬大廳標題字卡效果 */
+        #lobby-title {
+            /* 使用我們在 style.css 中定義的像素邊框樣式 */
+            border: var(--border-width) solid var(--pixel-black);
+            background-color: rgba(255,255,255,0.88); /* 白色底卡 */
+            padding: 5px 10px;
+            
+            /* 複製像素陰影效果 */
+            box-shadow: var(--border-width) var(--border-width) 0px 0px var(--pixel-black);
+            
+            /* 保持它漂浮在左上角 */
+            position: absolute; 
+            top: 10px; 
+            left: 10px; 
+            z-index: 60;
+            
+            font-size: 16px; /* 稍微放大標題字體 */
+        }
+
+        /* 排行榜：漂浮在右上角 */
+        #leaderboard-box {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 50;
+            padding: 12px;
+            background: rgba(255,255,255,0.88);
+            border: 3px solid var(--pixel-black);
+            box-shadow: 4px 4px 0 var(--pixel-black);
+            border-radius: 6px;
+            width: 250px;
+        }
+        /* 標題 */
+        #leaderboard-box h3 {
+            font-size: 16px;
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: 900;
+            color: #111;
+        }
+        /* 排行榜列表樣式 */
+        #leaderboard-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        /* 每一行項目 */
+        #leaderboard-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 8px;
+            margin-bottom: 5px;
+            background: #f3f3f3;
+            border: 2px solid var(--pixel-black);
+            box-shadow: 2px 2px 0 var(--pixel-black);
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            transition: transform 0.25s ease, background-color 0.25s ease;
+        }
+
+        /* 分數增加：微微放大 + 閃一下金色 */
+        @keyframes scoreUpPulse {
+            0%  { transform: scale(1);  box-shadow: 2px 2px 0 var(--pixel-black); }
+            30% { transform: scale(1.05); box-shadow: 0 0 10px rgba(250, 204, 21, 0.9); }
+            100% { transform: scale(1);  box-shadow: 2px 2px 0 var(--pixel-black); }
+        }
+
+        #leaderboard-list li.score-up {
+            animation: scoreUpPulse 0.4s ease-out;
+        }
+
+        /* 名次往前：往上浮一下 + 綠光 */
+        @keyframes rankUpGlow {
+            0%  { transform: translateY(0);  box-shadow: 2px 2px 0 var(--pixel-black); }
+            50% { transform: translateY(-4px); box-shadow: 0 0 10px rgba(74, 222, 128, 0.9); }
+            100% { transform: translateY(0);  box-shadow: 2px 2px 0 var(--pixel-black); }
+        }
+
+        #leaderboard-list li.rank-up {
+            animation: rankUpGlow 0.45s ease-out;
+        }
+
+        /* 名次下降：往下沉一點 + 淡紅 */
+        @keyframes rankDownFall {
+            0%  { transform: translateY(0);  opacity: 1; }
+            50% { transform: translateY(4px); opacity: 0.8; }
+            100% { transform: translateY(0);  opacity: 1; }
+        }
+
+        #leaderboard-list li.rank-down {
+            animation: rankDownFall 0.45s ease-out;
+        }
+
+        /* 新進榜：由小變大的 pop 效果 */
+        @keyframes rankNewPop {
+            0%  { transform: scale(0.8); opacity: 0; }
+            60% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        #leaderboard-list li.rank-new {
+            animation: rankNewPop 0.45s ease-out;
+        }
+
+        /* 名次顏色（使用 class 加上去更簡單） */
+        .rank-1 { background: linear-gradient(135deg, #fde047, #facc15); } 
+        .rank-2 { background: linear-gradient(135deg, #e2e8f0, #cbd5e1); } 
+        .rank-3 { background: linear-gradient(135deg, #f4a261, #e76f51); } 
+        /* 即時通訊區：一開始隱藏，點擊其他玩家時彈出 */
+        #chat-box {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 300px;
+            height: 200px;
+            z-index: 60;
+            display: none; 
+            flex-direction: column;
+            background-color: white;
+        }
+        #chat-messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 5px;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        .chat-input-group {
+            display: flex;
+            gap: 5px;
+        }
+        #chat-input {
+            flex-grow: 1;
+        }
+
+
+        /* -------------------- 寵物圖示在大廳中的樣式 -------------------- */
+        .pet-avatar {
+            position: absolute; 
+            width: 96px; 
+            height: 110px; 
+            text-align: center;
+            cursor: pointer; 
+        }
+        .pet-avatar img {
+            width: 100%;
+            height: auto;
+            image-rendering: pixelated;
+            background-color: transparent;
+            animation: pet-idle 1.6s ease-in-out infinite;
+            transform-origin: center bottom;
+        }
+
+        @keyframes pet-idle {
+            0%  { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-4px) scale(1.02); }
+            100% { transform: translateY(0) scale(1); }
+        }
+
+        /* 被選取的寵物（點擊後）再多一圈高亮 */
+        .pet-avatar.selected {
+            filter: drop-shadow(0 0 6px rgba(250, 204, 21, 0.9));
+        }
+
+        /* === 自己的寵物標籤樣式 === */
+        .pet-avatar#my-pet .pet-name-tag {
+            background-color: white; 
+            color: var(--pixel-black); 
+            font-weight: bold;
+            padding: 3px 6px;
+            border: 2px solid var(--pixel-black); 
+        }
+
+        /* 確保所有寵物名稱標籤的基礎樣式是統一的框體 */
+        .pet-name-tag {
+            background-color: var(--pixel-black);
+            color: white;
+            padding: 2px 5px;
+            font-size: 10px;
+            margin-top: 5px;
+            display: block;
+        }
+
+        /* ---------- Header 佈局 ---------- */
+        #status-bar {
+            font-size: 14px;
+        }
+
+        /* 讓左、右兩邊的狀態擺得比較整齊 */
+        .my-pet-status,
+        .my-score {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* 伺服器 & 寵物名稱：維持一般文字樣式 */
+        #server-id,
+        #pet-name {
+            font-size: 13px;
+            color: #d0d0d0;
+            opacity: 0.8;
+        }
+
+        /* 精神狀態：做成綠色膠囊 */
+        /* 精神飽滿：綠色 */
+        #pet-level.spirit-full {
+            background-color: var(--pixel-green);
+            color: #fff;
+        }
+
+        /* 精神普通：黃色 */
+        #pet-level.spirit-medium {
+            background-color: var(--pixel-yellow);
+            color: var(--pixel-black);
+        }
+
+        /* 精神低：紅色 */
+        #pet-level.spirit-low {
+            background-color: var(--pixel-red);
+            color: #fff;
+        }
+
+
+        /* 積分：做成黃色膠囊，跟精神狀態顏色區分 */
+        #player-score {
+            padding: 3px 12px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 13px;
+
+            background: linear-gradient(135deg, #f97316, #fde047); /* 橘黃漸層 */
+            color: #111;
+
+            box-shadow: 0 0 0 2px #111, 4px 4px 0 #000;
+        }
+        /* 精神狀態顏色分類 */
+        .spirit-full {
+            background: linear-gradient(135deg, #22c55e, #a3e635);
+            color: #111;
+            box-shadow: 0 0 0 2px #111, 4px 4px 0 #000;
+        }
+
+        .spirit-medium {
+            background: linear-gradient(135deg, #facc15, #fef08a);
+            color: #111;
+            box-shadow: 0 0 0 2px #111, 4px 4px 0 #000;
+        }
+
+        .spirit-low {
+            background: linear-gradient(135deg, #dc2626, #f87171);
+            color: white;
+            box-shadow: 0 0 0 2px #111, 4px 4px 0 #000;
+        }
+
+        /* 這是膠囊共同樣式 */
+        #pet-level {
+            padding: 3px 12px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <header id="status-bar">
+        <div class="my-pet-status">
+            <span id="server-id">伺服器：A</span> |
+            <span id="pet-name">寵物名稱：</span> 
+            <span id="pet-level">精神狀態：1</span>
+        </div>
+        <div class="my-score">
+            <span id="player-score">積分：0 Pts</span>
+            <button id="back-server-btn">返回伺服器</button>
+            <button id="logout-btn">登出</button>
+        </div>
+    </header>
+
+    <main class="main-layout">
+        
+        <section id="lobby-area">
+            <h2 id="lobby-title">🌍 虛擬大廳 (Server A)</h2>
+            
+            <div id="world-layer">
+                <div id="other-pet-1" class="pet-avatar world-pet" data-user-id="1" style="left: 70%; top: 30%;">
+                    <img src="./assets/pet-lobby.png" alt="其他寵物" class="pixel-img">
+                    <span class="pet-name-tag">玩家甲</span>
+                </div>
+                <div id="other-pet-2" class="pet-avatar world-pet" data-user-id="999" style="left: 20%; top: 50%;">
+                    <img src="./assets/pet-lobby.png" alt="其他寵物" class="pixel-img">
+                    <span class="pet-name-tag">通訊測試寵</span>
+                </div>
+            </div>
+
+            <div id="my-pet" class="pet-avatar my-pet-fixed">
+                <img id="my-pet-img" src="./assets/pet-lobby.png" alt="我的寵物" class="pixel-img">
+                <span class="pet-name-tag">自己</span>
+            </div>
+        </section>
+
+        
+        <div id="leaderboard-box" class="pixel-border-box">
+            <h3>🏆 排行榜</h3>
+            <ol id="leaderboard-list">
+                <li>1. 玩家名稱 (1000 Pts)</li>
+                <li>2. 玩家名稱 (800 Pts)</li>
+            </ol>
+        </div>
+
+        <div id="chat-box" class="pixel-border-box">
+            <h3 id="chat-header">💬 與 [玩家名稱] 通訊中 <button id="close-chat-btn" style="float: right;">X</button></h3>
+            <div id="chat-messages">
+                </div>
+    
+        <div id="chat-input-controls"> 
+            <div class="chat-input-group">
+                <input type="text" id="chat-input" placeholder="等待對方同意中..." disabled>
+                <button id="chat-send-btn" disabled>發送</button>
+            </div>
+            <p id="chat-status-message" style="color: red; font-size: 12px; margin-top: 5px;">📞 正在等待對方同意通訊...</p> 
+        </div>
+    </div>
+
+    </main>
+
+    <div id="global-modal-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); z-index: 1000; display: none; justify-content: center; align-items: center;">
+        
+        <div id="invite-modal-box" class="pixel-border-box" style="width: 350px; padding: 20px; text-align: center; background-color: white; position: relative;">
+            
+            <button id="modal-close-btn" style="position: absolute; top: 5px; right: 5px; background: none; border: none; font-size: 20px; line-height: 1; padding: 0; box-shadow: none; color: var(--pixel-black);">X</button>
+            
+            <h3 id="modal-header"></h3>
+            
+            <p id="modal-status-text" style="font-size: 24px; font-weight: bold; margin: 15px 0; color: var(--pixel-black);">...</p>
+            
+            <div id="modal-actions-area" style="display: flex; justify-content: space-around; gap: 10px; margin-top: 20px;">
+                </div>
+        </div>
+    </div>
+
+
+    <div id="communication-request-badge" class="pixel-border-box" style="position: fixed; bottom: 20px; left: 20px; z-index: 900; width: 50px; height: 50px; background-color: var(--pixel-blue); color: white; border-radius: 50%; display: none; justify-content: center; align-items: center; cursor: pointer; font-size: 14px; box-shadow: 4px 4px 0px 0px var(--pixel-black);">
+        🔔 <span id="request-count" style="margin-left: 5px;">0</span>
+    </div>
+
+    <div id="pet-info-card" class="pixel-border-box" style="position: absolute; display: none; z-index: 100; width: 180px;">
+        
+        <div id="target-pet-display" style="text-align: center; margin-bottom: 10px;">
+            <img id="target-pet-avatar" src="./assets/pet-lobby.png" alt="對手寵物" class="pixel-img" style="width: 64px;">
+            <p style="font-size: 14px; font-weight: bold; margin: 5px 0 0;" id="target-pet-name-tag">玩家名稱</p>
+            <p style="font-size: 12px; margin: 0; color: var(--pixel-green);" id="target-pet-status">精神狀態: 飽滿</p>
+        </div>
+
+        <hr style="border-top: 2px solid var(--pixel-black);">
+
+        <div id="card-actions" style="margin-top: 10px;">
+            <button id="action-chat-btn" data-mode="chat" style="width: 100%;">通訊 (私聊)</button>
+            <button id="action-battle-btn" data-mode="battle" style="width: 100%; margin-top: 5px;">對戰 (PK)</button>
+        </div>
+    </div>
+
+    <script type="module" src="./js/api_client.js"></script>
+    <script type="module" src="./js/websocket_client.js"></script>
+    <script type="module" src="./js/lobby_app.js"></script>
+</body>
+</html>

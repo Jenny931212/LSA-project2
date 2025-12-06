@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>寵物系統 - 登入</title>
+    <link rel="stylesheet" href="./css/style.css"> 
+    <style>
+        /* 專門為登入頁面設計的居中樣式 */
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+
+            background-image: url('./assets/login_background.png');
+            background-size: cover;        /* 讓圖片填滿整個畫面 */
+            background-position: center;   /* 置中裁切 */
+            background-repeat: no-repeat;
+            background-color: #333;   
+        }
+        .login-container {
+            width: 350px;
+            text-align: center;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 2px solid var(--pixel-black);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container pixel-border-box">
+    <h2>🐾 運動型寵物系統</h2>
+    <p>請先登入或註冊</p>
+
+    <form id="auth-form">
+        <input type="text" id="username" placeholder="帳號 (username)" required>
+        <input type="password" id="password" placeholder="密碼 (password)" required>
+        <div id="display-name-group" style="display:none;">
+            <input type="text" id="display-name" placeholder="暱稱 (display_name)">
+        </div>
+        <button type="submit" id="login-btn">登入</button>
+        <button type="button" id="switch-to-register-btn">切換至註冊</button>
+    </form>
+    <p id="message-area" style="color: red;"></p>
+</div>
+<script type="module" src="./js/login_app.js"></script>
+</body>
+</html>

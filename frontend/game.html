@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>寵物遊戲區</title>
+    <link rel="stylesheet" href="./css/style.css"> 
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            margin: 0;
+            height: 100vh;
+            background-color: var(--pixel-gray); /* 灰色背景 */
+            color: var(--pixel-black);
+            font-family: 'Pixel'; 
+        }
+        .game-header {
+            background-color: var(--pixel-black);
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 4px solid var(--pixel-white); /* 白色邊線 */
+        }
+        #back-to-lobby-btn {
+            /* 確保按鈕也是像素風格 */
+            border: 3px solid white;
+            background-color: transparent;
+            color: white;
+            padding: 5px 10px;
+        }
+
+        .game-container {
+            flex-grow: 1;
+            display: flex;
+            padding: 20px;
+            gap: 20px;
+        }
+        .game-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .panel-title {
+            text-align: center;
+            color: white;
+            background-color: var(--pixel-black); /* 標題黑底白字 */
+            padding: 5px;
+            margin: 0;
+            font-size: 1.2em;
+            border: 2px solid white;
+        }
+        .pixel-game-box {
+            min-height: 400px;
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: var(--pixel-white); /* 主要顯示區域使用白色底 */
+            padding: 5px;
+            /* 強制套用 pixel-border-box 樣式 */
+            border: var(--border-width) solid var(--pixel-black);
+            box-shadow: var(--border-width) var(--border-width) 0px 0px var(--pixel-black);
+        }
+
+        /* 樹莓派鏡頭區 */
+        #rpi-cam-box {
+            background-color: #555; /* 模擬未連線時的深色畫面 */
+            position: relative;
+        }
+        #rpi-cam-box h3 {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px;
+            font-size: 12px;
+        }
+
+        /* 小恐龍遊戲區 */
+        #dino-game-box {
+            background-color: #111; /* 深色背景更像遊戲主機 */
+            color: #00ff00; /* 綠色文字 */
+            position: relative;
+            overflow: hidden; 
+        }
+        #start-game-btn {
+            /* 修正：移除絕對定位，讓它回到正常流，並在右側對齊 */
+            padding: 10px 20px;
+            font-size: 1.2em;
+            background-color: var(--pixel-green); /* 亮綠色強調 */
+            color: var(--pixel-black);
+            /* 移除所有定位相關屬性 */
+        }
+
+        /* 對戰模式 UI */
+        #opponent-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            display: none; 
+            flex-direction: column;
+            gap: 5px;
+            z-index: 20;
+            /* 這裡必須是 pixel-border-box 樣式 */
+            border: var(--border-width) solid var(--pixel-black);
+            box-shadow: var(--border-width) var(--border-width) 0px 0px var(--pixel-black);
+        }
+        .opponent-tag {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .opponent-tag img {
+            width: 32px; 
+            height: 32px;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <header class="game-header">
+        <button id="back-to-lobby-btn">← 返回大廳</button>
+        <h2 id="game-title">寵物體力補充區</h2>
+        <div id="game-info">
+            <span id="player-status">狀態: 休息中</span>
+        </div>
+    </header>
+
+    <main class="game-container">
+        
+        <div id="rpi-cam-panel" class="game-panel">
+            <h2 class="panel-title" id="rpi-panel-title">即時鏡頭辨識區 (體力補充)</h2>
+            <div id="rpi-cam-box" class="pixel-game-box"> 
+                <h3>樹莓派影像串流中...</h3>
+            </div>
+        </div>
+
+        <div id="dino-game-panel" class="game-panel">
+            <h2 class="panel-title" id="dino-panel-title">小恐龍遊戲區 (分數累積)</h2>
+    
+            <div id="dino-game-box" class="pixel-game-box" style="position: relative; flex-direction: column;">
+        
+                <div id="status-bar-container" style="position: absolute; top: 10px; left: 10px; width: 80%; display: none;">
+                    <p style="margin: 0; font-size: 12px; color: var(--pixel-black);">體力值</p>
+                    <progress id="pet-stamina-bar" value="100" max="100" style="width: 100%;"></progress>
+                </div>
+
+            <div id="pet-status-screen" style="text-align: center; padding: 20px;">
+                <img id="game-pet-img" src="./assets/pet-lobby.png" alt="遊戲中寵物" class="pixel-img" style="width: 128px; margin-bottom: 10px;">
+                <p id="game-pet-message">點擊下方按鈕開始補充體力！</p>
+            </div>
+        
+            <div id="game-iframe-screen" style="display: none; width: 100%; height: 100%; justify-content: center; align-items: center;">
+                <h1 style="color: lime;">[ 小恐龍遊戲 iFrame / Canvas ]</h1>
+            </div>
+
+            <div id="opponent-status" class="pixel-border-box" style="position: absolute; top: 10px; right: 10px; display: none; padding: 5px; font-size: 12px;">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <img id="opponent-pet-avatar" src="./assets/pet-resting.png" alt="對手寵物" class="pixel-img" style="width: 32px;">
+                    <div>
+                        <p id="opponent-pet-name-tag" style="margin: 0; font-weight: bold;">對手名稱</p>
+                        <p id="opponent-score" style="margin: 0; color: yellow;">分數: 0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    
+        <div style="text-align: right; margin-top: 10px;">
+            <button id="start-game-btn" class="pixel-border-box">開始運動辨識</button>
+        </div>
+    </div>
+    </main>
+    
+    <script type="module" src="./js/game_app.js"></script>
+</body>
+</html>

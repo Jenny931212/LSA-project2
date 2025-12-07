@@ -734,7 +734,7 @@ async def health_check():
     return {"message": "wsC server running", "server_id": "C"}
 
 
-@app.websocket("/ws")
+@app.websocket("/ws/")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     # 這裡是關鍵！專門服務 server C

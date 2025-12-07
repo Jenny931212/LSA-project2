@@ -1,4 +1,4 @@
-// frontend/js/lobby_app.js (最終確認版本 - 連續移動＋正確鏡頭邏輯)
+// frontend/js/lobby_app.js  （修正版：支援多人同步 & 正確處理 WS 訊息）
 
 import { getPetStatus } from './api_client.js';
 import { initWebSocket, sendMessage, registerCallback } from './websocket_client.js';
@@ -63,6 +63,9 @@ const PET_SPRITES = {
     right: './assets/pet-right.png',
 };
 
+// 記錄其他玩家的寵物 DOM： { userId: { el, state } }
+const otherPets = {};   // ★ 修正：用來記錄其他玩家的座標
+
 const SERVER_THEMES = {
     A: "🌳 汪洋草原",
     B: "❄️ 凍原腳印",
@@ -113,66 +116,69 @@ function applyMapByServer(serverId) {
     }
 }
 
-
 /**
  * 更新鏡頭位置：根據寵物世界座標，移動世界層（world-layer）
- * worldX: 0~WORLD_WIDTH
- * worldY: 0~WORLD_HEIGHT
- *
- * 鏡頭最多移動到地圖邊界，不會露出 body 空白
  */
 function updateCamera(worldX, worldY) {
     const lobbyRect = lobbyAreaEl.getBoundingClientRect();
 
-    // 使用 scrollWidth / scrollHeight 取得世界實際像素大小（不受 transform 影響）
     const worldWidth = worldLayerEl.scrollWidth || worldLayerEl.offsetWidth;
     const worldHeight = worldLayerEl.scrollHeight || worldLayerEl.offsetHeight;
 
-    // 世界座標 → 世界像素位置
     const worldPX = (worldX / WORLD_WIDTH) * worldWidth;
     const worldPY = (worldY / WORLD_HEIGHT) * worldHeight;
 
-    // 1. 理想鏡頭：讓寵物位於畫面中央
     let idealOffsetX = worldPX - lobbyRect.width / 2;
     let idealOffsetY = worldPY - lobbyRect.height / 2;
 
-    // 2. 鏡頭偏移極限（不能讓地圖露出空白）
     const maxOffsetX = Math.max(0, worldWidth - lobbyRect.width);
     const maxOffsetY = Math.max(0, worldHeight - lobbyRect.height);
 
-    // 3. 限制在 0 ~ maxOffset 範圍內
     const finalOffsetX = Math.min(Math.max(0, idealOffsetX), maxOffsetX);
     const finalOffsetY = Math.min(Math.max(0, idealOffsetY), maxOffsetY);
 
     cameraOffsetX = finalOffsetX;
     cameraOffsetY = finalOffsetY;
 
-    // 4. 套用 transform
     worldLayerEl.style.transform = `translate(${-finalOffsetX}px, ${-finalOffsetY}px)`;
 }
 
 /**
- * 根據世界座標 + 鏡頭偏移，計算寵物在畫面上的位置
- * → 讓狗在鏡頭內自由移動，可走到螢幕邊界
+ * 根據世界座標 + 鏡頭偏移，計算我方寵物在畫面上的位置
  */
 function updateMyPetScreenPosition(worldX, worldY) {
-    const lobbyRect = lobbyAreaEl.getBoundingClientRect();
     const worldWidth = worldLayerEl.scrollWidth || worldLayerEl.offsetWidth;
     const worldHeight = worldLayerEl.scrollHeight || worldLayerEl.offsetHeight;
 
     const worldPX = (worldX / WORLD_WIDTH) * worldWidth;
     const worldPY = (worldY / WORLD_HEIGHT) * worldHeight;
 
-    // 寵物相對於螢幕的位置 = 世界像素 - 鏡頭偏移
     const screenX = worldPX - cameraOffsetX;
     const screenY = worldPY - cameraOffsetY;
 
-    // 讓狗的腳踩在 Y 座標上、X 以中心對齊
     const petWidth = myPetEl.offsetWidth || 96;
     const petHeight = myPetEl.offsetHeight || 110;
 
     myPetEl.style.left = `${screenX - petWidth / 2}px`;
     myPetEl.style.top = `${screenY - petHeight}px`;
+}
+
+// ⭐ 其他玩家的寵物：根據世界座標 + 鏡頭偏移，計算畫面位置
+function updateOtherPetScreenPosition(petEl, worldX, worldY) {
+    const worldWidth = worldLayerEl.scrollWidth || worldLayerEl.offsetWidth;
+    const worldHeight = worldLayerEl.scrollHeight || worldLayerEl.offsetHeight;
+
+    const worldPX = (worldX / WORLD_WIDTH) * worldWidth;
+    const worldPY = (worldY / WORLD_HEIGHT) * worldHeight;
+
+    const screenX = worldPX - cameraOffsetX;
+    const screenY = worldPY - cameraOffsetY;
+
+    const petWidth = petEl.offsetWidth || 96;
+    const petHeight = petEl.offsetHeight || 110;
+
+    petEl.style.left = `${screenX - petWidth / 2}px`;
+    petEl.style.top = `${screenY - petHeight}px`;
 }
 
 function getSpiritInfo(spirit) {
@@ -211,7 +217,6 @@ function updateSpiritBadge(spirit) {
 
 function closeChatBox() {
     chatBox.style.display = 'none';
-    // 徽章回到原位
     commRequestBadge.style.bottom = '20px';
     commRequestBadge.style.left = '20px';
 }
@@ -381,7 +386,6 @@ function openChatWindow(name, id, isAccepted) {
     chatBox.style.display = 'flex';
     document.querySelector('#chat-box #close-chat-btn').onclick = closeChatBox;
 
-    // 聊天框開啟時，徽章移動到聊天框上方
     commRequestBadge.style.bottom = '230px';
     commRequestBadge.style.left = '20px';
 
@@ -420,6 +424,41 @@ commRequestBadge.addEventListener('click', () => {
         updateCommBadge();
     }
 });
+
+// ⭐ 取得或建立「其他玩家的寵物」DOM
+function getOrCreateOtherPet(userId, displayName) {
+    if (otherPets[userId]) {
+        return otherPets[userId].el; // ★ 修正：記錄 state
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.classList.add('pet-avatar', 'other-pet');
+    wrapper.dataset.userId = String(userId);
+
+    const img = document.createElement('img');
+    img.src = PET_SPRITES.idle;
+    img.classList.add('pet-img');
+
+    const nameTag = document.createElement('div');
+    nameTag.classList.add('pet-name-tag');
+    nameTag.textContent = displayName || `玩家 ${userId}`;
+
+    wrapper.appendChild(img);
+    wrapper.appendChild(nameTag);
+
+    wrapper.addEventListener('click', handlePetClick);
+
+    worldLayerEl.appendChild(wrapper);
+
+    otherPets[userId] = {
+        el: wrapper,
+        x: WORLD_WIDTH / 2,
+        y: WORLD_HEIGHT / 2,
+        display_name: displayName || `玩家 ${userId}`,
+    };
+
+    return wrapper;
+}
 
 // ======================================================
 // 5. 點擊寵物：彈出選項菜單
@@ -472,7 +511,6 @@ actionChatBtn.addEventListener('click', () => {
     petInfoCard.style.display = 'none';
     openChatWindow(targetPetName, targetUserId, false);
     sendMessage('chat_invite', { receiver_id: targetUserId });
-    console.log(`向用戶 ${targetPetName} 發出通訊邀請...`);
 });
 
 // 對戰按鈕
@@ -491,32 +529,17 @@ actionBattleBtn.addEventListener('click', () => {
 
     const timerId = showBattleCountdown(opponentName, () => {
         closeGlobalModal();
-        console.log(`用戶 ${opponentName} 未回覆對戰邀約。`);
         showCustomAlert('❌ 對戰失敗', `${opponentName} 未確認您的對戰邀約。`);
     });
 
     window.currentBattleTimer = timerId;
-
-    // 測試用假資料：user_id 999 自動接受
-    if (opponentId === '999') {
-        setTimeout(() => {
-            clearInterval(window.currentBattleTimer);
-            closeGlobalModal();
-            showCustomAlert('🎉 對戰成功', `與 ${opponentName} 的對戰即將開始！`, () => {
-                localStorage.setItem('game_mode', 'battle');
-                localStorage.setItem('opponent_id', opponentId);
-                localStorage.setItem('opponent_name', opponentName);
-                window.location.href = 'game.html';
-            });
-        }, 2000);
-    }
 });
 
 // ======================================================
 // 6. 鍵盤移動寵物邏輯（連續移動版本）
 // ======================================================
 
-const MOVE_SPEED = 1; // 每一幀移動量（可再調）
+const MOVE_SPEED = 1;
 
 document.addEventListener('keydown', (e) => {
     if (globalModalOverlay.style.display === 'flex' || chatBox.style.display === 'flex') {
@@ -536,14 +559,10 @@ document.addEventListener('keyup', (e) => {
     }
 });
 
-/**
- * 每一幀更新移動（按住鍵可以持續移動）
- */
 function updateMovement() {
     let moved = false;
     let newDirection = 'idle';
 
-    // 上下左右，以最後判斷的方向為主（你也可以之後做多方向合成）
     if (keysPressed.ArrowUp) {
         myWorldY -= MOVE_SPEED;
         newDirection = 'up';
@@ -566,7 +585,6 @@ function updateMovement() {
     }
 
     if (!moved) {
-        // 如果沒在動，就開計時器切回 idle 圖
         if (!moveIdleTimer) {
             moveIdleTimer = setTimeout(() => {
                 setPetSprite('idle');
@@ -576,34 +594,25 @@ function updateMovement() {
         return;
     }
 
-    // 有移動就清除 idle 計時器
     if (moveIdleTimer) {
         clearTimeout(moveIdleTimer);
         moveIdleTimer = null;
     }
 
-    // 限制在世界邊界內
     myWorldX = Math.max(0, Math.min(WORLD_WIDTH, myWorldX));
     myWorldY = Math.max(0, Math.min(WORLD_HEIGHT, myWorldY));
 
-    // 更新外觀
     setPetSprite(newDirection);
 
-    // 同步 dataset 給其他邏輯用
     myPetEl.dataset.worldX = myWorldX;
     myPetEl.dataset.worldY = myWorldY;
 
-    // 推動鏡頭（鏡頭最多只能到地圖邊界）
     updateCamera(myWorldX, myWorldY);
-
-    // 更新狗在螢幕上的位置（狗可以走到螢幕邊界）
     updateMyPetScreenPosition(myWorldX, myWorldY);
 
-    // 通知 WebSocket 位置更新
     sendMessage('update_position', { x: myWorldX, y: myWorldY });
 }
 
-/** 遊戲主迴圈：讓 updateMovement 每一幀都被呼叫 */
 function gameLoop() {
     updateMovement();
     requestAnimationFrame(gameLoop);
@@ -621,7 +630,6 @@ function handleChatRequest(data) {
     } else {
         pendingChatRequests.push({ sender_id, sender_name });
         updateCommBadge();
-        console.log(`收到來自 ${sender_name} 的通訊請求，已放入左下角徽章。`);
     }
 }
 
@@ -637,6 +645,70 @@ function handleBattleAccepted(data) {
             window.location.href = 'game.html';
         });
     }
+}
+
+// ★ 新增：初始化時收到「整個大廳狀態」(lobby_state)
+function handleLobbyState(messageOrPayload) {
+    const myId = Number(localStorage.getItem('user_id') || '0');
+
+    // 同樣支援兩種形式：msg 或 payload
+    const payload = messageOrPayload.payload || messageOrPayload;
+    const players = payload.players || [];
+
+    players.forEach((p) => {
+        const uid = Number(p.user_id);
+        if (!uid || uid === myId) return;
+
+        const petEl = getOrCreateOtherPet(uid, p.display_name);
+        otherPets[uid].x = Number(p.x || WORLD_WIDTH / 2);
+        otherPets[uid].y = Number(p.y || WORLD_HEIGHT / 2);
+
+        updateOtherPetScreenPosition(petEl, otherPets[uid].x, otherPets[uid].y);
+    });
+}
+
+// ★ 新增：有新玩家加入 (player_joined)
+function handlePlayerJoined(messageOrPayload) {
+    const myId = Number(localStorage.getItem('user_id') || '0');
+    const payload = messageOrPayload.payload || messageOrPayload;
+    const player = payload.player || payload;
+
+    const uid = Number(player.user_id);
+    if (!uid || uid === myId) return;
+
+    const petEl = getOrCreateOtherPet(uid, player.display_name);
+    otherPets[uid].x = Number(player.x || WORLD_WIDTH / 2);
+    otherPets[uid].y = Number(player.y || WORLD_HEIGHT / 2);
+
+    updateOtherPetScreenPosition(petEl, otherPets[uid].x, otherPets[uid].y);
+}
+
+// ⭐ 收到「其他玩家移動」事件
+function handleOtherPetMoved(messageOrPayload) {
+    console.log('[WS] other_pet_moved raw =', messageOrPayload);
+
+    // ★ 修正：同時支援 wsClient 傳進來的是「整個 msg」或「只有 payload」
+    const payload = messageOrPayload.payload || messageOrPayload;
+    const player = payload.player || payload;
+
+    const myId = Number(localStorage.getItem('user_id') || '0');
+    const uid = Number(player.user_id);
+
+    if (!uid || uid === myId) {
+        return;
+    }
+
+    const x = Number(player.x);
+    const y = Number(player.y);
+    if (Number.isNaN(x) || Number.isNaN(y)) {
+        return;
+    }
+
+    const petEl = getOrCreateOtherPet(uid, player.display_name);
+    otherPets[uid].x = x;
+    otherPets[uid].y = y;
+
+    updateOtherPetScreenPosition(petEl, x, y);
 }
 
 // ======================================================
@@ -655,46 +727,30 @@ async function initializeLobby() {
         return;
     }
 
-    // 伺服器 ID -> 主題名稱
     const themeName = SERVER_THEMES[selected_server_id] || selected_server_id;
 
     serverIdEl.textContent = `伺服器：${themeName}`;
     lobbyTitleEl.textContent = `${themeName} - 大廳`;
     myPetImgEl.src = PET_SPRITES.idle;
 
-    // ⭐ 用伺服器 ID 來切換對應地圖 ⭐
     applyMapByServer(selected_server_id);
 
-    // 取得寵物狀態（從後端 API）
     try {
-        // 這裡會打到 /api/pet/status?user_id=xxx
         const petData = await getPetStatus();
-
-        // 後端回傳：
-        // {
-        //   pet_id,
-        //   pet_name,
-        //   energy,   // 0-100
-        //   status,   // "SLEEPING" / "TIRED" / "ACTIVE"
-        //   score
-        // }
 
         const spiritValue = typeof petData.energy === 'number'
             ? petData.energy
-            : 50; // fallback 避免 undefined
+            : 50;
 
         const { statusName } = getSpiritInfo(spiritValue);
 
-        // 顯示到畫面上
         petNameEl.textContent = `寵物名稱：${petData.pet_name || '未命名寵物'}`;
         petLevelEl.textContent = `精神狀態：${spiritValue} (${statusName})`;
         updateSpiritBadge(spiritValue);
 
-        // 名牌顯示玩家名稱（從登入時保存的 display_name）
         const myDisplayName = localStorage.getItem('display_name') || '玩家';
         myPetNameTagEl.textContent = myDisplayName;
 
-        // 存到 localStorage，給 game.html 使用
         localStorage.setItem('my_spirit_value', String(spiritValue));
         localStorage.setItem('my_display_name', myDisplayName);
 
@@ -714,27 +770,23 @@ async function initializeLobby() {
         localStorage.setItem('my_display_name', localStorage.getItem('display_name') || '玩家');
     }
 
-    // 初始寵物世界座標（世界中心）
     myWorldX = WORLD_WIDTH / 2;
     myWorldY = WORLD_HEIGHT / 2;
     myPetEl.dataset.worldX = myWorldX;
     myPetEl.dataset.worldY = myWorldY;
 
-    // 先把鏡頭對準世界中心，再根據鏡頭位置擺好狗
     updateCamera(myWorldX, myWorldY);
     updateMyPetScreenPosition(myWorldX, myWorldY);
 
-    // 綁定基本事件
     logoutBtn.addEventListener('click', () => {
         showCustomConfirm('登出確認', '您確定要登出並返回登入頁面嗎？', () => {
             localStorage.clear();
             showCustomAlert('訊息', '已登出。', () => {
                 window.location.href = 'login.html';
             });
-        }); 
+        });
     });
 
-    // 返回伺服器選單
     const backServerBtn = document.getElementById('back-server-btn');
     backServerBtn.addEventListener('click', () => {
         showCustomConfirm(
@@ -747,11 +799,9 @@ async function initializeLobby() {
         );
     });
 
-
     lobbyAreaEl.addEventListener('click', handlePetClick);
     closeChatBtn.onclick = closeChatBox;
 
-    // 排行榜更新
     function handleUpdatePetList(pets) {
         if (!leaderboardListEl) return;
 
@@ -813,36 +863,17 @@ async function initializeLobby() {
         lastLeaderboardState = newState;
     }
 
+    // ===== WebSocket 事件註冊 =====
     registerCallback('update_pet_list', handleUpdatePetList);
     registerCallback('chat_request', handleChatRequest);
     registerCallback('battle_accepted', handleBattleAccepted);
 
+    registerCallback('lobby_state', handleLobbyState);      // ★ 新增
+    registerCallback('player_joined', handlePlayerJoined);  // ★ 新增
+    registerCallback('other_pet_moved', handleOtherPetMoved);
+
+    // 啟動 WebSocket
     initWebSocket(token, myUserId);
-
-    // 測試用假排行榜
-    setTimeout(() => {
-        handleUpdatePetList([
-            { user_id: 1, display_name: '玩家甲', score: 500 },
-            { user_id: 2, display_name: '玩家乙', score: 300 },
-            { user_id: 3, display_name: '玩家丙', score: 100 },
-        ]);
-    }, 500);
-
-    setTimeout(() => {
-        handleUpdatePetList([
-            { user_id: 2, display_name: '玩家乙', score: 800 },
-            { user_id: 1, display_name: '玩家甲', score: 600 },
-            { user_id: 3, display_name: '玩家丙', score: 150 },
-        ]);
-    }, 2500);
-
-    setTimeout(() => {
-        handleUpdatePetList([
-            { user_id: 4, display_name: '新玩家', score: 1200 },
-            { user_id: 2, display_name: '玩家乙', score: 900 },
-            { user_id: 1, display_name: '玩家甲', score: 650 },
-        ]);
-    }, 5000);
 
     // 初始狀態
     modalCloseBtn.style.display = 'none';
@@ -857,3 +888,5 @@ async function initializeLobby() {
 // 入口
 // ======================================================
 initializeLobby();
+
+

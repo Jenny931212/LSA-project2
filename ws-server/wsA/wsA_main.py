@@ -173,7 +173,7 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
     pet_name = payload.get("pet_name") or "MyPet"
     energy = int(payload.get("energy", 100))
     status = payload.get("status") or "ACTIVE"
-    # [修改] 讀取前端傳來的 score
+    # [修改] 這裡讀取前端送來的分數，存起來
     score = int(payload.get("score", 0))
 
     x = payload.get("x")
@@ -188,7 +188,7 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "pet_name": pet_name,
         "energy": energy,
         "status": status,
-        "score": score, # [修改] 存入 score
+        "score": score,  # [修改] 儲存分數
         "x": float(x),
         "y": float(y),
     }
@@ -215,7 +215,7 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "server_id": server_id,
         "user_id": user_id,
         "payload": {
-            "player": player_info # [修改] 廣播包含 score 的完整資訊
+            "player": player_info # 這裡會包含 score 廣播給其他人
         },
     }
     await manager.broadcast_in_server(server_id, player_joined_msg, exclude=user_id)
@@ -279,9 +279,6 @@ async def handle_update_position(message: dict) -> None:
     state["y"] = float(y)
     manager.upsert_lobby_player(server_id, user_id, state)
 
-    # 這裡的 log 可以考慮拿掉，避免洗版
-    # log("UPDATE_POSITION", ...)
-
     msg = {
         "type": "other_pet_moved",
         "server_id": server_id,
@@ -291,7 +288,6 @@ async def handle_update_position(message: dict) -> None:
                 "user_id": user_id,
                 "x": state["x"],
                 "y": state["y"],
-                # 這裡不需要傳 score，減少流量，因為移動不會改分數
             }
         },
     }
@@ -727,7 +723,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             raw = await websocket.receive_text()
-            # log("WS_RECV_RAW", raw) # 怕太吵可以註解掉
+            # log("WS_RECV_RAW", raw)
 
             try:
                 message = json.loads(raw)
@@ -756,7 +752,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     log("WS_BIND_USER", f"這條連線綁定為 user_id={user_id}")
                 else:
                     if msg_user_id != user_id:
-                        log("JOIN_LOBBY_IMPERSONATE", f"ID不符，忽略")
+                        log(
+                            "JOIN_LOBBY_IMPERSONATE",
+                            f"連線實際 user_id={user_id}，但 join_lobby 帶 user_id={msg_user_id}，忽略",
+                        )
                         continue
 
                 message["user_id"] = user_id
@@ -764,6 +763,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             if user_id is None:
+                log("WS_NO_USER", f"尚未 join_lobby 的連線收到 {msg_type}，忽略")
                 continue
 
             if msg_user_id is not None and msg_user_id != user_id:

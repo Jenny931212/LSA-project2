@@ -6,23 +6,17 @@ from typing import Dict, Tuple, List, Set
 from dataclasses import dataclass, field
 import time
 import json
-import random  # 用來產生大廳隨機座標
-
+import random
 
 # ---------------------------------------------------------
-# 簡單 log 函式：之後都用這個印，方便在 demo 給老師看
+# Log 函式
 # ---------------------------------------------------------
 def log(prefix: str, message: str) -> None:
-    """
-    prefix：分類，例如 CONNECT / CHAT / BATTLE_UPDATE
-    message：想印的內容
-    """
     print(f"[wsA][{prefix}] {message}")
 
 
 app = FastAPI()
 
-# 先開 CORS，之後前端要連線會比較方便
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,55 +25,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# (server_id, user_id) 當 key
 UserKey = Tuple[str, int]
 
 
 @dataclass
 class BattleRoom:
-    """一個對戰房間的狀態（放在記憶體）"""
     battle_id: str
     server_id: str
     player1_id: int
     player2_id: int
     scores: Dict[int, int] = field(default_factory=dict)
-    state: str = "waiting"  # waiting / running / finished
+    state: str = "waiting"
 
 
 class ConnectionManager:
-    """管理所有 WebSocket 連線 + 大廳 + 對戰房 + 聊天許可"""
-
     def __init__(self) -> None:
-        # 線上使用者: (server_id, user_id) -> WebSocket
         self.active_connections: Dict[UserKey, WebSocket] = {}
-        # 每個 server 的大廳成員: server_id -> set(user_id)
         self.lobby_users: Dict[str, Set[int]] = {}
-        # 大廳玩家詳細資訊（含寵物 / 座標）：server_id -> { user_id -> info_dict }
-        # info_dict 例如：
-        # {
-        #   "user_id": 1,
-        #   "display_name": "...",
-        #   "pet_id": 10,
-        #   "pet_name": "...",
-        #   "energy": 80,
-        #   "status": "ACTIVE",
-        #   "x": 123,
-        #   "y": 456
-        # }
         self.lobby_player_states: Dict[str, Dict[int, dict]] = {}
-
-        # 對戰房間: battle_id -> BattleRoom
         self.battles: Dict[str, BattleRoom] = {}
-
-        # 已互相同意聊天的配對：例如 (1, 2) 代表 user1 與 user2 可以互傳訊息
         self.chat_approved_pairs: Set[Tuple[int, int]] = set()
-
-        # 記錄每個玩家上次廣播位置的時間（秒），用來做簡單節流
         self.last_position_broadcast: Dict[UserKey, float] = {}
 
-    # === 連線 / 大廳 ===
     def connect(self, server_id: str, user_id: int, websocket: WebSocket) -> None:
-        """記錄某個使用者已連線並加入大廳"""
         key: UserKey = (server_id, user_id)
         self.active_connections[key] = websocket
         if server_id not in self.lobby_users:
@@ -88,28 +56,22 @@ class ConnectionManager:
         log("CONNECT", f"server={server_id}, user_id={user_id} 加入連線與大廳")
 
     def disconnect(self, server_id: str, user_id: int) -> None:
-        """斷線時，把連線與大廳紀錄清掉"""
         key: UserKey = (server_id, user_id)
         self.active_connections.pop(key, None)
         if server_id in self.lobby_users:
             self.lobby_users[server_id].discard(user_id)
-        # 把大廳玩家狀態也移除
         if server_id in self.lobby_player_states:
             self.lobby_player_states[server_id].pop(user_id, None)
-        # 位置節流紀錄也刪掉
         self.last_position_broadcast.pop(key, None)
         log("DISCONNECT", f"server={server_id}, user_id={user_id} 離線並退出大廳")
 
     def get_online_users(self, server_id: str) -> List[int]:
-        """回傳該 server 大廳裡目前所有 user_id（排序過）"""
         return sorted(self.lobby_users.get(server_id, set()))
 
     def get_ws(self, server_id: str, user_id: int):
-        """拿到某個使用者的 WebSocket"""
         return self.active_connections.get((server_id, user_id))
 
     async def send_json(self, server_id: str, to_user_id: int, msg: dict) -> None:
-        """對單一使用者送一個 JSON 訊息"""
         ws = self.get_ws(server_id, to_user_id)
         if ws is not None:
             try:
@@ -123,7 +85,6 @@ class ConnectionManager:
         msg: dict,
         exclude: int | None = None,
     ) -> None:
-        """對同一個 server 的所有人廣播（可排除某個 user_id）"""
         for (sid, uid), ws in list(self.active_connections.items()):
             if sid != server_id:
                 continue
@@ -132,49 +93,38 @@ class ConnectionManager:
             try:
                 await ws.send_text(json.dumps(msg, ensure_ascii=False))
             except RuntimeError:
-                # 有人網路壞掉就先忽略
                 log("SEND_ERROR", f"server={sid}, user_id={uid} 傳送失敗，略過")
                 continue
 
-    # === 大廳玩家資訊相關（寵物 / 座標 / 體力） ===
     def upsert_lobby_player(self, server_id: str, user_id: int, info: dict) -> None:
-        """更新或新增大廳玩家資訊（含寵物 / energy / 座標）"""
         if server_id not in self.lobby_player_states:
             self.lobby_player_states[server_id] = {}
         info["user_id"] = user_id
         self.lobby_player_states[server_id][user_id] = info
 
     def get_lobby_players(self, server_id: str) -> List[dict]:
-        """取得某個 server 的所有玩家詳細資訊（list 形式，依 user_id 排序）"""
         server_players = self.lobby_player_states.get(server_id, {})
         return [server_players[uid] for uid in sorted(server_players.keys())]
 
     def get_player_state(self, server_id: str, user_id: int) -> dict | None:
-        """取得單一玩家的狀態（可能為 None）"""
         return self.lobby_player_states.get(server_id, {}).get(user_id)
 
     def get_player_energy(self, server_id: str, user_id: int) -> int | None:
-        """取得玩家體力（若沒紀錄則回 None）"""
         state = self.get_player_state(server_id, user_id)
         if not state:
             return None
         return int(state.get("energy", 0))
 
-    # === 聊天許可相關 ===
     def approve_chat_pair(self, user1_id: int, user2_id: int) -> None:
-        """記錄兩個使用者之間的聊天已被同意"""
         pair = tuple(sorted((user1_id, user2_id)))
         self.chat_approved_pairs.add(pair)
         log("CHAT_APPROVED", f"pair={pair} 已允許聊天")
 
     def is_chat_approved(self, from_user_id: int, to_user_id: int) -> bool:
-        """檢查兩個使用者之間是否已互相同意聊天"""
         pair = tuple(sorted((from_user_id, to_user_id)))
         return pair in self.chat_approved_pairs
 
-    # === 對戰相關輔助 ===
     def create_battle(self, server_id: str, player1_id: int, player2_id: int) -> BattleRoom:
-        """建立一個新的對戰房間，回傳 BattleRoom"""
         ts = int(time.time() * 1000)
         battle_id = f"{min(player1_id, player2_id)}_{max(player1_id, player2_id)}_{ts}"
         room = BattleRoom(
@@ -200,7 +150,6 @@ class ConnectionManager:
         log("BATTLE_FINISH", f"battle_id={battle_id} 已移除")
 
     def find_battle_by_user(self, server_id: str, user_id: int) -> BattleRoom | None:
-        """找到某個使用者目前所在的對戰房（若有）"""
         for room in self.battles.values():
             if room.server_id != server_id:
                 continue
@@ -211,49 +160,25 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# -------------------------------------------------------------------
-# 事件處理：join_lobby / pet_state_update / update_position / chat_* / battle_*
-# -------------------------------------------------------------------
-
 
 async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
-    """
-    處理玩家進入大廳
-
-    預期的 message 結構：
-    {
-        "type": "join_lobby",
-        "server_id": "A",
-        "user_id": 123,
-        "payload": {
-            "display_name": "玩家暱稱",
-            "pet_id": 1,
-            "pet_name": "MyPet",
-            "energy": 80,
-            "status": "ACTIVE",
-            "x": 123,   # 可選，沒給就後端亂數
-            "y": 456
-        }
-    }
-    """
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
 
-    # 記錄連線與大廳
     manager.connect(server_id, user_id, websocket)
 
-    # 取得玩家資訊（若缺少就用預設 / 隨機）
     display_name = payload.get("display_name") or f"Player{user_id}"
     pet_id = payload.get("pet_id") or 0
     pet_name = payload.get("pet_name") or "MyPet"
     energy = int(payload.get("energy", 100))
     status = payload.get("status") or "ACTIVE"
+    # [修改] 讀取前端傳來的 score
+    score = int(payload.get("score", 0))
 
     x = payload.get("x")
     y = payload.get("y")
     if x is None or y is None:
-        # 這裡的 (x, y) 是世界座標或畫面座標，由前端自己定義
         x = random.randint(0, 200)
         y = random.randint(0, 200)
 
@@ -263,16 +188,16 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "pet_name": pet_name,
         "energy": energy,
         "status": status,
+        "score": score, # [修改] 存入 score
         "x": float(x),
         "y": float(y),
     }
     manager.upsert_lobby_player(server_id, user_id, player_info)
 
-    # 回傳目前大廳所有在線玩家的完整資訊（初始化用）
     players = manager.get_lobby_players(server_id)
     log(
         "JOIN_LOBBY",
-        f"server={server_id}, user_id={user_id}, players={players}",
+        f"server={server_id}, user_id={user_id}, players_count={len(players)}",
     )
 
     lobby_state_msg = {
@@ -285,53 +210,29 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
     }
     await manager.send_json(server_id, user_id, lobby_state_msg)
 
-    # 廣播：有新玩家加入（只傳新玩家 info）
     player_joined_msg = {
         "type": "player_joined",
         "server_id": server_id,
         "user_id": user_id,
         "payload": {
-            "player": {
-                "user_id": user_id,
-                "display_name": display_name,
-                "pet_id": int(pet_id),
-                "pet_name": pet_name,
-                "energy": energy,
-                "status": status,
-                "x": float(x),
-                "y": float(y),
-            }
+            "player": player_info # [修改] 廣播包含 score 的完整資訊
         },
     }
     await manager.broadcast_in_server(server_id, player_joined_msg, exclude=user_id)
 
 
-# -------------------------
-# 寵物狀態更新事件（Cron / Pi 之後可以用）
-# -------------------------
-
-
 async def handle_pet_state_update(message: dict) -> None:
-    """
-    更新單一玩家寵物狀態（例如：體力下降 / 運動回滿）
-    payload:
-    {
-        "energy": 75,
-        "status": "TIRED",
-        "x": 80,   # 可選，沒給就不變
-        "y": 120   # 可選
-    }
-    """
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
 
     state = manager.get_player_state(server_id, user_id) or {}
-    # 只更新有給的欄位
     if "energy" in payload:
         state["energy"] = int(payload["energy"])
     if "status" in payload:
         state["status"] = str(payload["status"])
+    if "score" in payload: # [修改] 允許更新分數
+        state["score"] = int(payload["score"])
     if "x" in payload:
         state["x"] = float(payload["x"])
     if "y" in payload:
@@ -344,7 +245,6 @@ async def handle_pet_state_update(message: dict) -> None:
         f"server={server_id}, user_id={user_id}, state={state}",
     )
 
-    # 廣播給同一個 server 的所有玩家，讓前端更新畫面
     msg = {
         "type": "pet_state_update",
         "server_id": server_id,
@@ -356,31 +256,7 @@ async def handle_pet_state_update(message: dict) -> None:
     await manager.broadcast_in_server(server_id, msg)
 
 
-# -------------------------
-# 玩家位置更新事件（前端 sendMessage('update_position', { x, y })）
-# -------------------------
-
-
 async def handle_update_position(message: dict) -> None:
-    """
-    處理玩家在大廳移動座標的事件。
-
-    預期 message：
-    {
-        "type": "update_position",
-        "server_id": "A",
-        "user_id": 123,
-        "payload": {
-            "x": 80,
-            "y": 120
-        }
-    }
-
-    規則：
-    - 更新 manager.lobby_player_states 裡這個玩家的 x, y
-    - 簡單節流，避免每一幀都廣播
-    - 廣播給同一個 server 其他玩家：type = "other_pet_moved"
-    """
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -389,10 +265,8 @@ async def handle_update_position(message: dict) -> None:
     y = payload.get("y")
 
     if x is None or y is None:
-        log("UPDATE_POS_ERROR", f"server={server_id}, user_id={user_id} 缺少 x / y，略過")
         return
 
-    # 簡單節流：避免每一幀都廣播，這裡限制最短 0.05 秒（大約 20 FPS）
     now = time.time()
     key: UserKey = (server_id, user_id)
     last_ts = manager.last_position_broadcast.get(key, 0.0)
@@ -400,20 +274,14 @@ async def handle_update_position(message: dict) -> None:
         return
     manager.last_position_broadcast[key] = now
 
-    # 取出目前玩家狀態，沒有就用空 dict
     state = manager.get_player_state(server_id, user_id) or {}
-
-    # 更新座標（保持其他欄位：display_name / pet_name / energy / status）
     state["x"] = float(x)
     state["y"] = float(y)
     manager.upsert_lobby_player(server_id, user_id, state)
 
-    log(
-        "UPDATE_POSITION",
-        f"server={server_id}, user_id={user_id}, x={state['x']}, y={state['y']}",
-    )
+    # 這裡的 log 可以考慮拿掉，避免洗版
+    # log("UPDATE_POSITION", ...)
 
-    # 廣播給同一個 server 其他玩家（不包含自己）
     msg = {
         "type": "other_pet_moved",
         "server_id": server_id,
@@ -423,25 +291,14 @@ async def handle_update_position(message: dict) -> None:
                 "user_id": user_id,
                 "x": state["x"],
                 "y": state["y"],
+                # 這裡不需要傳 score，減少流量，因為移動不會改分數
             }
         },
     }
     await manager.broadcast_in_server(server_id, msg, exclude=user_id)
 
 
-# -------------------------
-# 聊天相關事件
-# -------------------------
-
-
 async def handle_chat_request(message: dict) -> None:
-    """
-    第一次聊天的請求：
-    payload:
-    {
-        "to_user_id": 2
-    }
-    """
     server_id = message.get("server_id", "A")
     from_user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -452,7 +309,6 @@ async def handle_chat_request(message: dict) -> None:
         return
     to_user_id = int(to_user_id)
 
-    # 檢查對方是否在線
     if manager.get_ws(server_id, to_user_id) is None:
         log(
             "CHAT_REQ_OFFLINE",
@@ -488,13 +344,6 @@ async def handle_chat_request(message: dict) -> None:
 
 
 async def handle_chat_request_accept(message: dict) -> None:
-    """
-    對方接受聊天請求：
-    payload:
-    {
-        "from_user_id": 1   # 原本發出請求的人
-    }
-    """
     server_id = message.get("server_id", "A")
     accept_user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -526,19 +375,6 @@ async def handle_chat_request_accept(message: dict) -> None:
 
 
 async def handle_chat_message(message: dict) -> None:
-    """
-    處理聊天訊息（一對一聊天）：
-    payload:
-    {
-        "to_user_id": 2,
-        "content": "訊息內容"
-    }
-
-    規則：
-    - 體力 <= 30（休眠） → 不可聊天
-    - 只有在雙方已經透過 chat_request + chat_request_accept 同意後，
-      才允許互相傳訊息
-    """
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -552,7 +388,6 @@ async def handle_chat_message(message: dict) -> None:
 
     to_user_id = int(to_user_id)
 
-    # 先檢查自己體力（0–30 休眠 → 不可通訊）
     energy = manager.get_player_energy(server_id, user_id)
     if energy is not None and energy <= 30:
         log(
@@ -571,7 +406,6 @@ async def handle_chat_message(message: dict) -> None:
         await manager.send_json(server_id, user_id, error_msg)
         return
 
-    # 再檢查是否已同意聊天
     if not manager.is_chat_approved(user_id, to_user_id):
         log(
             "CHAT_BLOCKED",
@@ -589,7 +423,6 @@ async def handle_chat_message(message: dict) -> None:
         await manager.send_json(server_id, user_id, error_msg)
         return
 
-    # 確認對方在線
     if manager.get_ws(server_id, to_user_id) is None:
         log(
             "CHAT_TARGET_OFFLINE",
@@ -627,24 +460,9 @@ async def handle_chat_message(message: dict) -> None:
     await manager.send_json(server_id, to_user_id, chat_msg)
 
 
-# -------------------------
-# 對戰相關事件
-# -------------------------
-
-
 async def handle_battle_invite(message: dict) -> None:
-    """
-    A 玩家邀請 B 玩家對戰
-    payload:
-    {
-        "to_user_id": 2
-    }
-
-    規則：
-    - 邀請者體力需 >= 70（精神飽滿），否則無法發出邀請
-    """
     server_id = message.get("server_id", "A")
-    user_id = int(message.get("user_id"))  # 邀請者
+    user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
     to_user_id_raw = payload.get("to_user_id")
     if to_user_id_raw is None:
@@ -652,7 +470,6 @@ async def handle_battle_invite(message: dict) -> None:
         return
     to_user_id = int(to_user_id_raw)
 
-    # 先檢查邀請者體力
     inviter_energy = manager.get_player_energy(server_id, user_id)
     if inviter_energy is not None and inviter_energy < 70:
         log(
@@ -671,7 +488,6 @@ async def handle_battle_invite(message: dict) -> None:
         await manager.send_json(server_id, user_id, msg)
         return
 
-    # 檢查對方是否在線
     if manager.get_ws(server_id, to_user_id) is None:
         log(
             "BATTLE_INVITE_OFFLINE",
@@ -704,14 +520,8 @@ async def handle_battle_invite(message: dict) -> None:
 
 
 async def handle_battle_accept(message: dict) -> None:
-    """
-    B 玩家接受邀請，建立對戰房間並通知雙方 battle_start
-
-    規則：
-    - 雙方體力都需 >= 70（精神飽滿），否則無法開始對戰
-    """
     server_id = message.get("server_id", "A")
-    accept_user_id = int(message.get("user_id"))  # 接受邀請的人 (B)
+    accept_user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
     from_user_id_raw = payload.get("from_user_id")
     if from_user_id_raw is None:
@@ -719,11 +529,9 @@ async def handle_battle_accept(message: dict) -> None:
         return
     from_user_id = int(from_user_id_raw)
 
-    # 檢查雙方體力
     p1_energy = manager.get_player_energy(server_id, from_user_id)
     p2_energy = manager.get_player_energy(server_id, accept_user_id)
 
-    # 任何一方 < 70 都不允許對戰
     if (p1_energy is not None and p1_energy < 70) or (p2_energy is not None and p2_energy < 70):
         log(
             "BATTLE_ACCEPT_BLOCKED_ENERGY",
@@ -753,7 +561,6 @@ async def handle_battle_accept(message: dict) -> None:
         await manager.send_json(server_id, accept_user_id, msg_b)
         return
 
-    # 體力 OK，建立房間
     room = manager.create_battle(server_id, from_user_id, accept_user_id)
 
     log(
@@ -779,16 +586,6 @@ async def handle_battle_accept(message: dict) -> None:
 
 
 async def handle_battle_update(message: dict) -> None:
-    """
-    對戰過程中更新分數 / 狀態（雙方都收到）
-
-    payload:
-    {
-        "battle_id": "...",
-        "score": 50,
-        "state": "running"
-    }
-    """
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -828,7 +625,6 @@ async def handle_battle_update(message: dict) -> None:
 
 
 async def handle_battle_result(message: dict) -> None:
-    """對戰結束，廣播結果並清掉房間"""
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -877,12 +673,6 @@ async def handle_battle_result(message: dict) -> None:
 
 
 async def handle_battle_disconnect(server_id: str, user_id: int) -> None:
-    """
-    對戰中有人斷線時：
-    - 自動判定另一方為贏家
-    - 廣播 battle_result
-    - 清除 battle_room
-    """
     room = manager.find_battle_by_user(server_id, user_id)
     if room is None:
         return
@@ -921,35 +711,23 @@ async def handle_battle_disconnect(server_id: str, user_id: int) -> None:
     manager.finish_battle(room.battle_id)
 
 
-# -------------------------------------------------------------------
-# FastAPI 路由
-# -------------------------------------------------------------------
-
-
 @app.get("/")
 async def health_check():
-    """健康檢查：你現在看到的 JSON 就是這個"""
     log("HEALTH_CHECK", "收到 / 請求")
     return {"message": "wsA server running", "server_id": "A"}
 
 
 @app.websocket("/ws/")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket 入口：
-    - 先 accept
-    - 收到第一包 join_lobby 才會把使用者加入大廳
-    - 一條連線只能代表一個 user_id（防止冒名送訊息）
-    """
     await websocket.accept()
-    server_id = "A"  # 這支程式專門服務 server A
+    server_id = "A"
     user_id: int | None = None
     log("WS_ACCEPT", "有新的 WebSocket 連線進來")
 
     try:
         while True:
             raw = await websocket.receive_text()
-            log("WS_RECV_RAW", raw)
+            # log("WS_RECV_RAW", raw) # 怕太吵可以註解掉
 
             try:
                 message = json.loads(raw)
@@ -958,11 +736,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             msg_type = message.get("type")
-
-            # 不信任 client 傳來的 server_id，統一覆蓋為 "A"
             message["server_id"] = server_id
 
-            # 從訊息裡先讀出 user_id（可能是錯的或被亂改）
             msg_user_id_raw = message.get("user_id")
             msg_user_id: int | None = None
             if msg_user_id_raw is not None:
@@ -971,48 +746,31 @@ async def websocket_endpoint(websocket: WebSocket):
                 except (TypeError, ValueError):
                     msg_user_id = None
 
-            # ---------- 第一階段：處理 join_lobby，決定這條連線的 user_id ----------
             if msg_type == "join_lobby":
                 if msg_user_id is None:
                     log("JOIN_LOBBY_ERROR", "join_lobby 缺少有效 user_id，忽略")
                     continue
 
                 if user_id is None:
-                    # 第一次 join_lobby：綁定身分
                     user_id = msg_user_id
                     log("WS_BIND_USER", f"這條連線綁定為 user_id={user_id}")
                 else:
-                    # 這條線已經有 user_id 了，不允許換人
                     if msg_user_id != user_id:
-                        log(
-                            "JOIN_LOBBY_IMPERSONATE",
-                            f"連線實際 user_id={user_id}，但 join_lobby 帶 user_id={msg_user_id}，忽略",
-                        )
+                        log("JOIN_LOBBY_IMPERSONATE", f"ID不符，忽略")
                         continue
 
                 message["user_id"] = user_id
                 await handle_join_lobby(message, websocket)
                 continue
 
-            # ---------- 第二階段：其他事件，都必須已經綁定 user_id ----------
             if user_id is None:
-                log("WS_NO_USER", f"尚未 join_lobby 的連線收到 {msg_type}，忽略")
                 continue
 
-            # 如果訊息裡帶的 user_id 跟連線綁定的不一樣 → 視為冒名
             if msg_user_id is not None and msg_user_id != user_id:
-                log(
-                    "WS_IMPERSONATE",
-                    f"連線實際 user_id={user_id}，但訊息帶 user_id={msg_user_id}，拒絕",
-                )
-                # 嚴格一點可以直接關閉：
-                # await websocket.close()
                 continue
 
-            # 統一：之後所有 handler 看到的 message["user_id"] 都是這條線綁定的 user_id
             message["user_id"] = user_id
 
-            # 根據 type 分派到不同 handler
             if msg_type == "pet_state_update":
                 await handle_pet_state_update(message)
             elif msg_type == "update_position":
@@ -1035,10 +793,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 log("WS_UNKNOWN_TYPE", f"未知事件 type={msg_type!r}，略過")
 
     except WebSocketDisconnect:
-        # 斷線時先處理對戰自動結束，再把人從大廳移除，並通知其他玩家
         if user_id is not None:
             await handle_battle_disconnect(server_id, user_id)
-
             manager.disconnect(server_id, user_id)
             log("WS_DISCONNECT", f"server={server_id}, user_id={user_id} 斷線")
 

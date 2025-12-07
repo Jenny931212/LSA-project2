@@ -933,7 +933,7 @@ async def health_check():
     return {"message": "wsA server running", "server_id": "A"}
 
 
-@app.websocket("/ws")
+@app.websocket("/ws/")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket 入口：

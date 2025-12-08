@@ -45,24 +45,32 @@ export function initWebSocket(token, userId, initialData = {}) {
                 ? initialData.y
                 : 100;
 
-        // 連線後發送 join_lobby，帶入完整資訊（含分數與座標）
         const joinMessage = {
             type: "join_lobby",
             server_id: serverId,
             user_id: parseInt(userId),
             payload: {
-                display_name: initialData.display_name
-                    || localStorage.getItem("display_name")
-                    || `Player${userId}`,
+                display_name:
+                    initialData.display_name ||
+                    localStorage.getItem("display_name") ||
+                    `Player${userId}`,
                 pet_id: initialData.pet_id || 1,
                 pet_name: initialData.pet_name || "MyPet",
-                energy: typeof initialData.energy === "number" ? initialData.energy : 100,
+                energy:
+                    typeof initialData.energy === "number"
+                        ? initialData.energy
+                        : 100,
                 status: initialData.status || "ACTIVE",
-                score: typeof initialData.score === "number" ? initialData.score : 0,
-                x: initialX,
-                y: initialY,
+                score:
+                    typeof initialData.score === "number"
+                        ? initialData.score
+                        : 0,
+                // ❌ 不再自己決定 x, y
+                // x: 100,
+                // y: 100,
             },
         };
+
 
         sendRaw(joinMessage);
     };

@@ -8,7 +8,7 @@ let isConnected = false;
  * 初始化 Web Socket 連線
  * @param {string} token 使用者 JWT Token
  * @param {string} userId 使用者 ID
- * @param {object} initialData 包含玩家初始資訊 (pet_id, score 等)
+ * @param {object} initialData 包含玩家初始資訊 (pet_id, score, x, y 等)
  */
 export function initWebSocket(token, userId, initialData = {}) {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -35,24 +35,35 @@ export function initWebSocket(token, userId, initialData = {}) {
         console.log(`%c[WS] 連線成功！Server: ${serverId}, User: ${userId}`, "color: green; font-weight: bold;");
         isConnected = true;
 
-        // 連線後發送 join_lobby，帶入完整資訊（含分數）
+        // ★★ 關鍵：優先使用 lobby_app 傳進來的 initialData.x / initialData.y
+        const initialX =
+            typeof initialData.x === "number"
+                ? initialData.x
+                : 100; // 如果沒給就先用 100 當預設
+        const initialY =
+            typeof initialData.y === "number"
+                ? initialData.y
+                : 100;
+
+        // 連線後發送 join_lobby，帶入完整資訊（含分數與座標）
         const joinMessage = {
             type: "join_lobby",
             server_id: serverId,
             user_id: parseInt(userId),
             payload: {
-                display_name: initialData.display_name || localStorage.getItem('display_name') || `Player${userId}`,
-                pet_id: initialData.pet_id || 1, 
+                display_name: initialData.display_name
+                    || localStorage.getItem("display_name")
+                    || `Player${userId}`,
+                pet_id: initialData.pet_id || 1,
                 pet_name: initialData.pet_name || "MyPet",
-                energy: typeof initialData.energy === 'number' ? initialData.energy : 100,
+                energy: typeof initialData.energy === "number" ? initialData.energy : 100,
                 status: initialData.status || "ACTIVE",
-                // [修正] 傳送分數給後端
-                score: typeof initialData.score === 'number' ? initialData.score : 0,
-                // [修正] 初始座標強制設定為地圖中心
-                x: 100,
-                y: 100
-            }
+                score: typeof initialData.score === "number" ? initialData.score : 0,
+                x: initialX,
+                y: initialY,
+            },
         };
+
         sendRaw(joinMessage);
     };
 

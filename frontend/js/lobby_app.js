@@ -85,8 +85,17 @@ function applyMapByServer(serverId) {
 // [修正重點] 更新鏡頭時，必須強制更新所有其他玩家的螢幕位置
 function updateCamera(worldX, worldY) {
     const lobbyRect = lobbyAreaEl.getBoundingClientRect();
-    const worldWidth = worldLayerEl.scrollWidth || worldLayerEl.offsetWidth;
-    const worldHeight = worldLayerEl.scrollHeight || worldLayerEl.offsetHeight;
+    // ⭕ 確保不會是 0，至少用大廳的大小當 fallback
+    const worldWidth =
+        worldLayerEl.scrollWidth ||
+        worldLayerEl.offsetWidth ||
+        lobbyRect.width ||
+        1;
+    const worldHeight =
+        worldLayerEl.scrollHeight ||
+        worldLayerEl.offsetHeight ||
+        lobbyRect.height ||
+        1;
 
     const worldPX = (worldX / WORLD_WIDTH) * worldWidth;
     const worldPY = (worldY / WORLD_HEIGHT) * worldHeight;
@@ -113,8 +122,17 @@ function updateCamera(worldX, worldY) {
 }
 
 function updateMyPetScreenPosition(worldX, worldY) {
-    const worldWidth = worldLayerEl.scrollWidth || worldLayerEl.offsetWidth;
-    const worldHeight = worldLayerEl.scrollHeight || worldLayerEl.offsetHeight;
+    const lobbyRect = lobbyAreaEl.getBoundingClientRect();
+    const worldWidth =
+        worldLayerEl.scrollWidth ||
+        worldLayerEl.offsetWidth ||
+        lobbyRect.width ||
+        1;
+    const worldHeight =
+        worldLayerEl.scrollHeight ||
+        worldLayerEl.offsetHeight ||
+        lobbyRect.height ||
+        1;
     const worldPX = (worldX / WORLD_WIDTH) * worldWidth;
     const worldPY = (worldY / WORLD_HEIGHT) * worldHeight;
     const screenX = worldPX - cameraOffsetX;
@@ -126,8 +144,17 @@ function updateMyPetScreenPosition(worldX, worldY) {
 }
 
 function updateOtherPetScreenPosition(petEl, worldX, worldY) {
-    const worldWidth = worldLayerEl.scrollWidth || worldLayerEl.offsetWidth;
-    const worldHeight = worldLayerEl.scrollHeight || worldLayerEl.offsetHeight;
+    const lobbyRect = lobbyAreaEl.getBoundingClientRect();
+    const worldWidth =
+        worldLayerEl.scrollWidth ||
+        worldLayerEl.offsetWidth ||
+        lobbyRect.width ||
+        1;
+    const worldHeight =
+        worldLayerEl.scrollHeight ||
+        worldLayerEl.offsetHeight ||
+        lobbyRect.height ||
+        1;
     const worldPX = (worldX / WORLD_WIDTH) * worldWidth;
     const worldPY = (worldY / WORLD_HEIGHT) * worldHeight;
     // 使用當前的 cameraOffsetX, cameraOffsetY
@@ -453,10 +480,18 @@ function handleLobbyState(msg) {
     players.forEach((p) => {
         const uid = Number(p.user_id);
         if (!uid || uid === myId) return;
-        const petEl = getOrCreateOtherPet(uid, p.display_name, Number(p.x), Number(p.y));
-        otherPets[uid].x = Number(p.x || WORLD_WIDTH / 2);
-        otherPets[uid].y = Number(p.y || WORLD_HEIGHT / 2);
-        updateOtherPetScreenPosition(petEl, otherPets[uid].x, otherPets[uid].y);
+        // ⭕ 確保有數字座標
+        const px = (typeof p.x === 'number' && !Number.isNaN(p.x))
+            ? p.x
+            : WORLD_WIDTH / 2;
+        const py = (typeof p.y === 'number' && !Number.isNaN(p.y))
+            ? p.y
+            : WORLD_HEIGHT / 2;
+
+        const petEl = getOrCreateOtherPet(uid, p.display_name, px, py);
+        otherPets[uid].x = px;
+        otherPets[uid].y = py;
+        updateOtherPetScreenPosition(petEl, px, py);
     });
 
     // 初始進入大廳時，校正鏡頭和我的位置
@@ -471,15 +506,22 @@ function handlePlayerJoined(msg) {
     const player = msg.payload.player;
     const uid = Number(player.user_id);
     
-    // [修正] 新增玩家並更新排行榜
     allPlayers[uid] = player;
     updateLeaderboard();
 
     if (!uid || uid === myId) return;
-    const petEl = getOrCreateOtherPet(uid, player.display_name, Number(player.x), Number(player.y));
-    otherPets[uid].x = Number(player.x || WORLD_WIDTH / 2);
-    otherPets[uid].y = Number(player.y || WORLD_HEIGHT / 2);
-    updateOtherPetScreenPosition(petEl, otherPets[uid].x, otherPets[uid].y);
+
+    const px = (typeof player.x === 'number' && !Number.isNaN(player.x))
+        ? player.x
+        : WORLD_WIDTH / 2;
+    const py = (typeof player.y === 'number' && !Number.isNaN(player.y))
+        ? player.y
+        : WORLD_HEIGHT / 2;
+
+    const petEl = getOrCreateOtherPet(uid, player.display_name, px, py);
+    otherPets[uid].x = px;
+    otherPets[uid].y = py;
+    updateOtherPetScreenPosition(petEl, px, py);
 }
 
 function handlePlayerLeft(msg) {
@@ -529,17 +571,23 @@ function handleOtherPetMoved(msg) {
     const uid = Number(player.user_id);
     if (uid === currentMyUserId) return;
 
-    // 更新資料 (僅位置)
+    const px = (typeof player.x === 'number' && !Number.isNaN(player.x))
+        ? player.x
+        : (allPlayers[uid]?.x ?? WORLD_WIDTH / 2);
+    const py = (typeof player.y === 'number' && !Number.isNaN(player.y))
+        ? player.y
+        : (allPlayers[uid]?.y ?? WORLD_HEIGHT / 2);
+
     if (allPlayers[uid]) {
-        allPlayers[uid].x = player.x;
-        allPlayers[uid].y = player.y;
+        allPlayers[uid].x = px;
+        allPlayers[uid].y = py;
     }
 
-    // 確保寵物 DOM 存在
-    const petEl = getOrCreateOtherPet(uid, (allPlayers[uid] ? allPlayers[uid].display_name : `Player${uid}`), player.x, player.y);
-    otherPets[uid].x = Number(player.x);
-    otherPets[uid].y = Number(player.y);
-    updateOtherPetScreenPosition(petEl, otherPets[uid].x, otherPets[uid].y);
+    const name = allPlayers[uid] ? allPlayers[uid].display_name : `Player${uid}`;
+    const petEl = getOrCreateOtherPet(uid, name, px, py);
+    otherPets[uid].x = px;
+    otherPets[uid].y = py;
+    updateOtherPetScreenPosition(petEl, px, py);
 }
 
 // 聊天與對戰回呼
@@ -707,6 +755,10 @@ async function initializeLobby() {
     
     updateCamera(myWorldX, myWorldY);
     updateMyPetScreenPosition(myWorldX, myWorldY);
+
+    // ★★ 關鍵：把初始座標塞進 myPetData，等一下要送給 WebSocket
+    myPetData.x = myWorldX;
+    myPetData.y = myWorldY;
 
     // 註冊 WebSocket 回呼
     registerCallback('lobby_state', handleLobbyState);

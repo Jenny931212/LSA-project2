@@ -183,6 +183,7 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         y = random.randint(0, 200)
 
     player_info = {
+        "user_id": user_id,
         "display_name": display_name,
         "pet_id": int(pet_id),
         "pet_name": pet_name,
@@ -193,6 +194,9 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "y": float(y),
     }
     manager.upsert_lobby_player(server_id, user_id, player_info)
+
+    # ✅ 再從 manager 拿完整 state（確保和 server 內部一致）
+    full_state = manager.get_player_state(server_id, user_id)
 
     players = manager.get_lobby_players(server_id)
     log(
@@ -215,7 +219,7 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "server_id": server_id,
         "user_id": user_id,
         "payload": {
-            "player": player_info # 這裡會包含 score 廣播給其他人
+            "player": full_state,
         },
     }
     await manager.broadcast_in_server(server_id, player_joined_msg, exclude=user_id)

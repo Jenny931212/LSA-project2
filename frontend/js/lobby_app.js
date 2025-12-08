@@ -772,6 +772,30 @@ async function initializeLobby() {
     updateCamera(myWorldX, myWorldY);
     updateMyPetScreenPosition(myWorldX, myWorldY);
 
+    logoutBtn.addEventListener('click', () => {
+        showCustomConfirm('登出確認', '您確定要登出並返回登入頁面嗎？', () => {
+            localStorage.clear();
+            showCustomAlert('訊息', '已登出。', () => {
+                window.location.href = 'login.html';
+            });
+        });
+    });
+
+    const backServerBtn = document.getElementById('back-server-btn');
+    backServerBtn.addEventListener('click', () => {
+        showCustomConfirm(
+            '返回伺服器選單',
+            '確定要回到伺服器選擇畫面嗎？',
+            () => {
+                localStorage.removeItem('selected_server_id');
+                window.location.href = 'server-select.html';
+            }
+        );
+    });
+
+    lobbyAreaEl.addEventListener('click', handlePetClick);
+    closeChatBtn.onclick = closeChatBox;
+
     // ★★ 關鍵：把初始座標塞進 myPetData，等一下要送給 WebSocket
     myPetData.x = myWorldX;
     myPetData.y = myWorldY;
@@ -800,12 +824,5 @@ async function initializeLobby() {
     commRequestBadge.style.left = '20px';
     requestAnimationFrame(gameLoop);
 }
-
-// 登出按鈕
-logoutBtn.addEventListener('click', () => {
-    localStorage.clear();
-    window.location.href = 'login.html';
-});
-
 
 initializeLobby();

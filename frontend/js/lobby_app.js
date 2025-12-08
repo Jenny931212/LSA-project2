@@ -448,57 +448,73 @@ function updateLeaderboard() {
     });
 }
 
-// WS 回呼處理器
 function handleLobbyState(msg) {
     const myId = currentMyUserId;
     const players = msg.payload.players || [];
-    
-    // [修正] 更新全域玩家列表並渲染排行榜
+
+    // 1. 更新 allPlayers & 自己的狀態 / 積分
     allPlayers = {};
-    players.forEach(p => {
+    players.forEach((p) => {
         allPlayers[p.user_id] = p;
-        // 更新自己的狀態
+
         if (p.user_id === myId) {
-            localStorage.setItem('my_spirit_value', String(p.energy || 50));
-            const { statusName } = getSpiritInfo(p.energy || 50);
-            petLevelEl.textContent = `狀態：${p.energy || 50} (${statusName})`;
-            updateSpiritBadge(p.energy || 50);
-            if (playerScoreEl) playerScoreEl.textContent = `積分：${p.score || 0} Pts`;
+            const energy = p.energy || 50;
+            const { statusName } = getSpiritInfo(energy);
+
+            localStorage.setItem('my_spirit_value', String(energy));
+            petLevelEl.textContent = `狀態：${energy} (${statusName})`;
+            updateSpiritBadge(energy);
+
+            if (playerScoreEl) {
+                playerScoreEl.textContent = `積分：${p.score || 0} Pts`;
+            }
         }
     });
     updateLeaderboard();
 
-    // 渲染其他玩家
+    // 2. 用「伺服器的座標」決定「我自己的世界座標 & 鏡頭」
+    const me = players.find(p => p.user_id === myId);
+    if (me) {
+        myWorldX = Number(me.x ?? WORLD_WIDTH / 2);
+        myWorldY = Number(me.y ?? WORLD_HEIGHT / 2);
+
+        myPetEl.dataset.worldX = myWorldX;
+        myPetEl.dataset.worldY = myWorldY;
+
+        updateCamera(myWorldX, myWorldY);
+        updateMyPetScreenPosition(myWorldX, myWorldY);
+    }
+
+    // 3. 清掉已下線的寵物
     const onlineUserIds = new Set(players.map(p => p.user_id));
-    Object.keys(otherPets).forEach(uid => {
+    Object.keys(otherPets).forEach((uid) => {
         if (!onlineUserIds.has(Number(uid))) {
             otherPets[uid].el.remove();
             delete otherPets[uid];
         }
     });
 
+    // 4. 依伺服器給的座標，畫出「其他玩家」的位置
     players.forEach((p) => {
         const uid = Number(p.user_id);
         if (!uid || uid === myId) return;
-        // ⭕ 確保有數字座標
-        const px = (typeof p.x === 'number' && !Number.isNaN(p.x))
-            ? p.x
-            : WORLD_WIDTH / 2;
-        const py = (typeof p.y === 'number' && !Number.isNaN(p.y))
-            ? p.y
-            : WORLD_HEIGHT / 2;
 
-        const petEl = getOrCreateOtherPet(uid, p.display_name, px, py);
-        otherPets[uid].x = px;
-        otherPets[uid].y = py;
-        updateOtherPetScreenPosition(petEl, px, py);
+        const worldX = Number(p.x ?? WORLD_WIDTH / 2);
+        const worldY = Number(p.y ?? WORLD_HEIGHT / 2);
+
+        const petEl = getOrCreateOtherPet(uid, p.display_name, worldX, worldY);
+        otherPets[uid].x = worldX;
+        otherPets[uid].y = worldY;
+
+        updateOtherPetScreenPosition(petEl, worldX, worldY);
     });
 
-    // 初始進入大廳時，校正鏡頭和我的位置
-    if (myPetEl.dataset.worldX && myPetEl.dataset.worldY) {
-        updateCamera(Number(myPetEl.dataset.worldX), Number(myPetEl.dataset.worldY));
-        updateMyPetScreenPosition(Number(myPetEl.dataset.worldX), Number(myPetEl.dataset.worldY));
-    }
+    // 🚫 不要再用舊的這段「dataset.worldX/worldY 再校正一次」
+    //    因為我們已經在上面用伺服器座標做過了
+    // if (myPetEl.dataset.worldX && myPetEl.dataset.worldY) {
+    //     updateCamera(Number(myPetEl.dataset.worldX), Number(myPetEl.dataset.worldY));
+    //     updateMyPetScreenPosition(Number(myPetEl.dataset.worldX), Number(myPetEl.dataset.worldY));
+    // }
 }
 
 function handlePlayerJoined(msg) {

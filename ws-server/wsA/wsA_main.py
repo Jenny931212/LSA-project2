@@ -8,6 +8,10 @@ import time
 import json
 import random
 
+WORLD_WIDTH = 200
+WORLD_HEIGHT = 200
+
+
 # ---------------------------------------------------------
 # Log 函式
 # ---------------------------------------------------------
@@ -179,8 +183,8 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
     x = payload.get("x")
     y = payload.get("y")
     if x is None or y is None:
-        x = random.randint(0, 200)
-        y = random.randint(0, 200)
+        x = random.randint(0, WORLD_WIDTH)
+        y = random.randint(0, WORLD_HEIGHT)
 
     player_info = {
         "user_id": user_id,
@@ -194,6 +198,12 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "y": float(y),
     }
     manager.upsert_lobby_player(server_id, user_id, player_info)
+
+    # ★ 新增：方便你看後端實際記錄的座標
+    log(
+        "JOIN_LOBBY_POS",
+        f"server={server_id}, user_id={user_id}, x={player_info['x']}, y={player_info['y']}",
+    )
 
     # ✅ 再從 manager 拿完整 state（確保和 server 內部一致）
     full_state = manager.get_player_state(server_id, user_id)

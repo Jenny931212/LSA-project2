@@ -40,6 +40,7 @@ class BattleRoom:
     player2_id: int
     scores: Dict[int, int] = field(default_factory=dict)
     state: str = "waiting"
+    ready: Dict[int, bool] = field(default_factory=dict)
 
 
 class ConnectionManager:
@@ -137,6 +138,7 @@ class ConnectionManager:
             player1_id=player1_id,
             player2_id=player2_id,
             scores={player1_id: 0, player2_id: 0},
+            ready={player1_id: False, player2_id: False},
         )
         self.battles[battle_id] = room
         log(
@@ -594,6 +596,42 @@ async def handle_battle_accept(message: dict) -> None:
         }
         await manager.send_json(server_id, pid, msg)
 
+async def handle_battle_ready(message: dict) -> None:
+    server_id = message.get("server_id", "A")
+    user_id = int(message.get("user_id"))
+    payload = message.get("payload") or {}
+    battle_id = payload.get("battle_id")
+
+    if not battle_id:
+        log("BATTLE_READY_ERROR", "缺少 battle_id")
+        return
+
+    room = manager.get_battle(battle_id)
+    if not room:
+        log("BATTLE_READY_ERROR", "battle_id 不存在")
+        return
+
+    # 標記該玩家已準備
+    room.ready[user_id] = True
+    log("BATTLE_READY", f"user {user_id} 已準備好 battle {battle_id}")
+
+    # 檢查雙方是否都 ready
+    if all(room.ready.values()):
+        log("BATTLE_GO", f"battle {battle_id} 雙方都準備好了，發送 battle_go")
+
+        msg = {
+            "type": "battle_go",
+            "server_id": server_id,
+            "payload": {
+                "battle_id": battle_id,
+                "player1_id": room.player1_id,
+                "player2_id": room.player2_id,
+            }
+        }
+
+        await manager.send_json(server_id, room.player1_id, msg)
+        await manager.send_json(server_id, room.player2_id, msg)
+
 
 async def handle_battle_update(message: dict) -> None:
     server_id = message.get("server_id", "A")
@@ -801,6 +839,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 await handle_battle_accept(message)
             elif msg_type == "battle_update":
                 await handle_battle_update(message)
+            elif msg_type == "battle_ready":
+                await handle_battle_ready(message)
             elif msg_type == "battle_result":
                 await handle_battle_result(message)
             else:

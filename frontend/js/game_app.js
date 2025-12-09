@@ -1,115 +1,723 @@
-// frontend/js/game_app.js (最終 Web Socket 準備版本)
+// frontend/js/game_app.js (最終 Web Socket 準備版本 - 點擊遊戲邏輯)
+
+import { getPetStatus } from './api_client.js';
+import { sendMessage } from './websocket_client.js'; // 引入 WS 發送功能
+import { handleKeyboardInput, startDinoGame, stopDinoGame } from './dino_game.js';
 
 // ======================================================
 // 1. DOM 元素定義
 // ======================================================
 const dinoPanelTitleEl = document.getElementById('dino-panel-title'); // 遊戲區塊大標題
 const petStatusScreenEl = document.getElementById('pet-status-screen'); // 預設的狗狗狀態畫面
-const gameIframeScreenEl = document.getElementById('game-iframe-screen'); // 遊戲本體畫面
+const gameIframeScreenEl = document.getElementById('game-iframe-screen'); // 遊戲本體畫面容器
 const startGameBtn = document.getElementById('start-game-btn'); // 開始遊戲辨識按鈕
-const statusBarContainerEl = document.getElementById('status-bar-container'); // 狀態條容器
+const startButtonWrapperEl = document.getElementById('start-button-wrapper'); // 開始按鈕的容器 (用於隱藏/顯示)
+const backToLobbyBtn = document.getElementById('back-to-lobby-btn');
+const gameTitleEl = document.getElementById('game-title');
 
-// 對戰模式專用 DOM (使用修正後的 ID)
+// 左邊鏡頭 / 狗狗預覽區
+const rpiCamBoxEl = document.getElementById('rpi-cam-box');
+const rpiCamLabelEl = document.getElementById('rpi-cam-label');
+const dogPreviewImgEl = document.getElementById('dog-preview');
+
+// 鍵盤模式下，是否開啟預覽狗狗
+let keyboardPreviewActive = false;
+
+
+// 新增的模式選擇相關 DOM
+const modeSelectScreenEl = document.getElementById('mode-select-screen'); // 模式選擇畫面
+const rpiModeBtn = document.getElementById('rpi-mode-btn'); // 樹莓派模式按鈕
+const keyboardModeBtn = document.getElementById('keyboard-mode-btn'); // 鍵盤模式按鈕
+
+// ⭐ PK 倒數圈圈
+const battleCountdownEl = document.getElementById('battle-mode-countdown');
+const battleCountdownTextEl = document.getElementById('battle-mode-countdown-text');
+
+// 新增狀態變數
+let inputMode = ''; // 'rpi' 或 'keyboard'
+let isGameActive = false; // 追蹤遊戲是否在運行 (避免重複綁定/解綁)
+
+// ⭐ PK 模式：選擇操作方式倒數用
+let battleModeSelectTimer = null;
+let battleModeCountdownInterval = null;
+const BATTLE_MODE_SELECT_SECONDS = 5;
+
+// ⭐ FIX 1: 更改為正確的狀態顯示元素 ID
+const playerStatusEl = document.getElementById('player-status');
+
+// 我的狀態 
+const mySpiritValueEl = document.getElementById('my-spirit-value'); 
+const myScoreValueEl = document.getElementById('my-score-value');
+const gamePetImgEl = document.getElementById('game-pet-img'); // 狀態畫面的寵物圖
+const gamePetMessageEl = document.getElementById('game-pet-message'); // 狀態畫面的訊息
+
+// 對戰模式專用 DOM 
 const opponentStatusEl = document.getElementById('opponent-status');
-const opponentAvatarEl = document.getElementById('opponent-pet-avatar'); 
-const opponentNameEl = document.getElementById('opponent-pet-name-tag'); 
+const opponentNameEl = document.getElementById('opponent-pet-name-tag');
 const opponentScoreEl = document.getElementById('opponent-score'); 
+const opponentAvatarEl = document.getElementById('opponent-pet-avatar'); 
 
-const backToLobbyBtn = document.getElementById('back-to-lobby-btn'); 
-
+// 新增的遊戲 Canvas 元素
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas ? canvas.getContext('2d') : null;
+const gamePromptEl = document.getElementById('game-prompt');
 
 // ======================================================
-// 2. 核心狀態判斷函數 (從 lobby_app.js 複製，確保獨立性)
+// 2. 遊戲狀態變數
 // ======================================================
-/**
- * 根據精神狀態數值 (1-100) 獲取狀態名稱和遊戲中圖片路徑
- */
-function getSpiritInfo(spirit) {
-    let statusName = '';
-    let statusImg = ''; 
+let gameMode = ''; 
+let mySpirit = 0;
+let initialSpirit = 0;
+let myGameScore = 0;
+let opponentScore = 0;
 
-    if (spirit >= 71) {
-        statusName = '飽滿';
-        statusImg = './assets/pet-active.png'; 
-    } else if (spirit >= 31) {
-        statusName = '休息中';
-        statusImg = './assets/pet-resting.png';
-    } else {
-        statusName = '疲憊';
-        statusImg = './assets/pet-tired.png';
+// ✅ 改成累積時間（秒），從 0 開始往上加
+let elapsedTime = 0;
+
+let gameRunning = false;
+let gameInterval = null;
+
+function handlePreviewKeyDown(event) {
+    if (!keyboardPreviewActive || !dogPreviewImgEl) return;
+
+    if (event.key === ' ' || event.key === 'ArrowUp') {
+        // 跳躍
+        dogPreviewImgEl.src = './assets/pet-jump.png';
+    } else if (event.key === 'ArrowDown') {
+        // 蹲下
+        dogPreviewImgEl.src = './assets/pet-duck.png';
     }
-    return { statusName, gameImg: statusImg };
+}
+
+function handlePreviewKeyUp(event) {
+    if (!keyboardPreviewActive || !dogPreviewImgEl) return;
+
+    // 放開 上 / 空白 / 下 的時候，回到跑步姿勢
+    if (event.key === ' ' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        dogPreviewImgEl.src = './assets/pet-run.png';
+    }
 }
 
 
 // ======================================================
-// 3. 初始化遊戲頁面
+// 3. 核心狀態判斷函數 (FIX 6: 調整分數區間)
 // ======================================================
 
-function initializeGame() {
-    const gameMode = localStorage.getItem('game_mode');
-    const mySpirit = localStorage.getItem('my_spirit_value');
-    
-    // 獲取自己寵物狀態資訊 (用於 solo 模式和基本顯示)
-    const { statusName, gameImg } = getSpiritInfo(parseInt(mySpirit));
+/**
+ * 根據精神狀態數值 (1-100) 獲取狀態名稱和遊戲中圖片路徑
+ * 0-30: pet-tired, 31-70: pet-resting, 71-100: pet-active
+ */
+function getSpiritInfo(spirit) {
+    let statusName = '';
+    let statusImg = '';
+    let statusClass = '';
 
-    // 更新自己寵物的狀態畫面 (左半部)
-    document.getElementById('game-pet-img').src = gameImg;
-    document.getElementById('game-pet-message').textContent = `精神狀態: ${mySpirit} (${statusName})，點擊下方開始補充！`;
-    
-    // 顯示體力條
-    if(statusBarContainerEl) statusBarContainerEl.style.display = 'block';
+    if (spirit >= 71) { // 71-100
+        statusName = '飽滿 💪';
+        statusImg = './assets/pet-active.png'; 
+        statusClass = 'spirit-full';
+    } else if (spirit >= 31) { // 31-70
+        statusName = '普通 😐';
+        statusImg = './assets/pet-resting.png';
+        statusClass = 'spirit-medium';
+    } else { // 0-30
+        statusName = '低落 😞';
+        statusImg = './assets/pet-tired.png';
+        statusClass = 'spirit-low';
+    }
+    return { statusName, statusImg, statusClass };
+}
 
-    if (gameMode === 'battle') {
-        // --- 對戰模式邏輯 ---
-        const opponentName = localStorage.getItem('opponent_name');
-        const opponentSpirit = localStorage.getItem('opponent_spirit_value');
-        
-        // 取得對手寵物圖片 (使用對手的精神狀態決定)
-        const { gameImg: opponentGameImg } = getSpiritInfo(parseInt(opponentSpirit));
+// ======================================================
+// 4. 遊戲核心邏輯
+// ======================================================
 
-        // 顯示對手資訊框 (使用 flex 讓內部分割線正常顯示)
-        if(opponentStatusEl) opponentStatusEl.style.display = 'flex';
+/** 繪製遊戲畫面 (Canvas) */
+function drawGame() {
+    if (!ctx) return;
 
-        // 更新對手資訊 (頭像, 名字, 分數)
-        if(opponentNameEl) opponentNameEl.textContent = opponentName || '未知對手';
-        if(opponentAvatarEl) opponentAvatarEl.src = opponentGameImg;
-        if(opponentScoreEl) opponentScoreEl.textContent = '分數: 0'; 
-        
-        // 更新標題
-        if(dinoPanelTitleEl) dinoPanelTitleEl.textContent = `⚔️ 對戰模式: VS ${opponentName}`;
-        
-    } else if (gameMode === 'solo') {
-        // --- 單人模式邏輯 (solo) ---
-        if(dinoPanelTitleEl) dinoPanelTitleEl.textContent = `🏃 體力補充區`;
-        // 確保對手資訊隱藏
-        if(opponentStatusEl) opponentStatusEl.style.display = 'none';
-    } else {
-        // 錯誤或直接訪問
-        console.error('遊戲模式錯誤，返回大廳。');
+    ctx.save();
+
+    // 左上角：時間
+    ctx.fillStyle = 'white';
+    ctx.font = '16px "Press Start 2P", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`時間: ${elapsedTime}s`, 10, 25);
+
+    // 左上角第二行：自己的分數（特別是 PK 模式要清楚看到）
+    ctx.fillStyle = 'yellow';
+    ctx.fillText(`我的分數: ${myGameScore}`, 10, 50);
+
+    ctx.restore();
+
+    // 提示文字（下面那一行）
+    if (gamePromptEl) {
+        if (gameMode === 'battle') {
+            gamePromptEl.textContent =
+                `PK 模式｜躲避障礙物與鳥，活越久、得分越高！目前時間: ${elapsedTime}s`;
+        } else {
+            gamePromptEl.textContent =
+                `躲避障礙物與鳥，活越久越難！目前時間: ${elapsedTime}s`;
+        }
     }
 
-    // 綁定開始按鈕事件
-    if(startGameBtn) {
-        startGameBtn.addEventListener('click', () => {
-            // 隱藏寵物狀態畫面，顯示遊戲 iFrame
-            if(petStatusScreenEl) petStatusScreenEl.style.display = 'none';
-            if(gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex'; // 使用 flex 讓內容居中
-            startGameBtn.style.display = 'none'; // 隱藏開始按鈕
+    // 對方的分數繼續交給右側對戰資訊框顯示
+    if (gameMode === 'battle') {
+        if (opponentScoreEl) {
+            opponentScoreEl.textContent = `分數: ${opponentScore}`;
+        }
+    }
+}
 
-            console.log(`遊戲啟動，模式: ${gameMode}`);
+
+/** 遊戲計時器迴圈 (無變動) */
+function gameTimerLoop() {
+    if (!gameRunning) return;
+    elapsedTime++;    // 存活時間 +1 秒
+    drawGame();       // 更新畫面上的時間顯示（不會結束遊戲）
+}
+
+/** 開始遊戲 (無變動) */
+function startGame() {
+    if (petStatusScreenEl) petStatusScreenEl.style.display = 'none';
+    if (gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex'; 
+    if (startButtonWrapperEl) startButtonWrapperEl.style.display = 'none';
+
+    myGameScore = 0;
+    elapsedTime = 0;          // ⭐ 從 0 秒開始計算存活時間
+    gameRunning = true;
+    
+    drawGame();
+    gameInterval = setInterval(gameTimerLoop, 1000);  // 每秒更新一次時間
+}
+
+/** 遊戲結束邏輯 (FIX 3, 4, 5, 7) */
+function endGame() {
+    gameRunning = false;
+    
+    if (gameInterval) {
+        clearInterval(gameInterval);
+        gameInterval = null;
+    }
+
+    let finalMessage = '點數結算中...';
+    let newSpirit = initialSpirit; 
+    
+    const SCORE_COLOR = '#cc0066'; 
+    const SPIRIT_COLOR = '#006400'; 
+    const WIN_COLOR = '#006400'; 
+    const LOSE_COLOR = '#8b0000'; 
+    
+    let finalPetImg = getSpiritInfo(initialSpirit).statusImg;
+
+    stopDinoGame();
+
+    // 處理 SOLO 模式的體力結算
+    if (gameMode === 'solo') {
+        const spiritGained = Math.floor(myGameScore / 100);
+        newSpirit = Math.min(100, initialSpirit + spiritGained);
+        
+        // FIX 3: 確保結算文字置中
+        finalMessage = `
+            <div style="font-size: 1.2em; line-height: 1.8; text-align: center;">
+                🎉 訓練完成！<br>
+                您獲得 <span id="animated-score-value" style="font-weight: bold; color: ${SCORE_COLOR}; font-size: 1.8em;">0</span> 分，換算成體力值為 ${spiritGained} 點。<br>
+                <hr style="border-top: 2px solid var(--pixel-black); width: 80%; margin: 15px auto;">
+                您現在的體力值為: 
+                <span id="animated-spirit-value" style="font-weight: bold; color: ${SPIRIT_COLOR}; font-size: 1.8em;">
+                    ${Math.floor(initialSpirit)}/100 
+                </span>
+            </div>
+        `; 
+        
+        // FIX 6: 根據新體力值更新圖片
+        finalPetImg = getSpiritInfo(newSpirit).statusImg;
+        
+    } 
+    // 處理 BATTLE 模式的結果顯示 (FIX 7)
+    else if (gameMode === 'battle') {
+        let resultText;
+        if (myGameScore > opponentScore) {
+            resultText = `<span style="color: ${WIN_COLOR};">🏆 獲勝！</span>`;
+            finalPetImg = './assets/pet-win.png'; 
+        } else if (myGameScore < opponentScore) {
+            resultText = `<span style="color: ${LOSE_COLOR};">😭 敗北！</span>`;
+            finalPetImg = './assets/pet-lose.png'; 
+        } else {
+            resultText = '🤝 平手。';
+            finalPetImg = './assets/pet-resting.png'; 
+        }
+
+        // FIX 3: 確保結算文字置中
+        finalMessage = `
+            <div style="font-size: 1.2em; line-height: 1.8; text-align: center;">
+                ⚔️ 對戰結束！<br>
+                您的得分：<span id="animated-score-value" style="font-weight: bold; color: ${SCORE_COLOR}; font-size: 1.8em;">0</span><br>
+                對手得分：${opponentScore}<br>
+                <hr style="border-top: 2px solid var(--pixel-black); width: 80%; margin: 15px auto;">
+                最終結果：${resultText}
+            </div>
+        `;
+        
+        sendMessage('game_end', {
+            final_score: myGameScore,
+            game_id: localStorage.getItem('game_id')
         });
+        
+        if (opponentStatusEl) {
+             opponentStatusEl.style.display = 'none';
+        }
+    }
+
+    // 顯示遊戲狀態畫面和結算訊息 (變為字卡)
+    if(petStatusScreenEl) {
+        petStatusScreenEl.classList.add('pixel-border-box');
+        petStatusScreenEl.style.backgroundColor = '#fff9c4'; 
+        petStatusScreenEl.style.boxShadow = '8px 8px 0 var(--pixel-dark-blue)'; 
+        petStatusScreenEl.style.color = 'var(--pixel-black)'; 
+        petStatusScreenEl.style.padding = '25px'; 
+        
+        // ⭐ FIX 4: 讓字卡充滿空間並垂直置中
+        petStatusScreenEl.style.flexGrow = '1';
+        petStatusScreenEl.style.width = '100%';
+        petStatusScreenEl.style.display = 'flex';
+        petStatusScreenEl.style.flexDirection = 'column';
+        petStatusScreenEl.style.justifyContent = 'center';
+        petStatusScreenEl.style.alignItems = 'center'; // 水平置中 (新增)
+
+        if(gamePetMessageEl) {
+             gamePetMessageEl.style.color = 'var(--pixel-black)'; 
+             gamePetMessageEl.style.textAlign = 'center'; // FIX 3: 確保訊息容器本身也置中
+             gamePetMessageEl.innerHTML = finalMessage;
+        }
+    }
+    if(petStatusScreenEl) petStatusScreenEl.style.display = 'flex'; // 使用 flex 佈局
+    if(gameIframeScreenEl) gameIframeScreenEl.style.display = 'none';
+    
+    // 更新寵物圖片
+    if(gamePetImgEl) {
+        gamePetImgEl.src = finalPetImg; 
+        gamePetImgEl.style.marginBottom = '5px';
+    }
+    
+    // 動畫啟動 (分數)
+    const animatedScoreEl = document.getElementById('animated-score-value');
+    if (animatedScoreEl) {
+        animateCounter(0, myGameScore, animatedScoreEl, null, null, false);
+    }
+    
+    if (gameMode === 'solo') {
+        const animatedSpiritEl = document.getElementById('animated-spirit-value');
+        if (animatedSpiritEl) {
+            animateCounter(initialSpirit, newSpirit, animatedSpiritEl, playerStatusEl, newSpirit, true);
+        } else {
+            localStorage.setItem('my_spirit_value', newSpirit);
+            if(playerStatusEl) playerStatusEl.textContent = `精神狀態: ${Math.floor(newSpirit)}/100`;
+        }
+    }
+
+    // 確保結束時移除鍵盤監聽
+    if (isGameActive && inputMode === 'keyboard') {
+        document.removeEventListener('keydown', handleKeyboardInput);
+        document.removeEventListener('keyup', handleKeyboardInput); 
+        isGameActive = false;
+    }
+
+    // ⭐ 鍵盤模式時，也要關閉狗狗預覽的鍵盤監聽
+    if (keyboardPreviewActive) {
+        document.removeEventListener('keydown', handlePreviewKeyDown);
+        document.removeEventListener('keyup', handlePreviewKeyUp);
+        keyboardPreviewActive = false;
+    }
+
+    // 按鈕邏輯 (FIX 5: 將按鈕移動到字卡內)
+    if(startGameBtn) {
+        startGameBtn.style.display = 'block'; 
+        startGameBtn.textContent = '返回大廳'; 
+        
+        // 確保按鈕本身沒有監聽 startGame
+        startGameBtn.removeEventListener('click', startGame);
+        startGameBtn.addEventListener('click', () => window.location.href = 'lobby.html');
+        
+        // 創建一個新的置中容器，將按鈕放入並附加到字卡中
+        const buttonWrapper = document.createElement('div');
+        buttonWrapper.style.textAlign = 'center';
+        buttonWrapper.style.marginTop = '20px';
+        buttonWrapper.appendChild(startGameBtn);
+        
+        if (petStatusScreenEl) {
+            // 確保按鈕在訊息下方
+            petStatusScreenEl.appendChild(buttonWrapper); 
+        }
+    }
+}
+
+/** 體力值動畫更新 (FIX 6: 根據精神狀態更新圖片) */
+function animateCounter(startValue, endValue, targetEl, headerEl = null, finalValue = null, isSpirit = false) {
+    // ... (rest of function logic) ...
+    const duration = 1500; // 1.5 秒動畫
+    const stepTime = 16; 
+    const steps = duration / stepTime;
+    const increment = (endValue - startValue) / steps;
+    let currentValue = startValue;
+    let stepCount = 0;
+    
+    const petImgEl = document.getElementById('game-pet-img'); 
+    let lastSpiritStatus = -1; // 用於避免重複更換圖片
+
+    const interval = setInterval(() => {
+        stepCount++;
+        
+        if (stepCount >= steps) {
+            clearInterval(interval);
+            currentValue = endValue; // 確保數值精確
+        } else {
+            currentValue += increment;
+        }
+        
+        const displayValue = Math.floor(currentValue);
+
+        if (isSpirit) {
+            // SOLO 模式: 體力值顯示 (X/100 格式)
+            targetEl.textContent = `${displayValue}/100`;
+            if(headerEl) headerEl.textContent = `精神狀態: ${displayValue}/100`; // FIX 1: 右上角同步更新
+
+            // ⭐ FIX 6: 根據 'displayValue' (體力值) 獲取狀態並更新圖片
+            const currentStatus = getSpiritInfo(displayValue).statusClass;
+            if (currentStatus !== lastSpiritStatus) {
+                const { statusImg } = getSpiritInfo(displayValue); 
+                if(petImgEl) petImgEl.src = statusImg;
+                lastSpiritStatus = currentStatus;
+            }
+
+            if (stepCount >= steps) {
+                 if (finalValue !== null) {
+                     localStorage.setItem('my_spirit_value', finalValue);
+                 }
+            }
+        } else {
+            // BATTLE/SOLO 模式: 分數顯示 (單純數值)
+            targetEl.textContent = displayValue;
+        }
+
+    }, stepTime);
+}
+
+/** 倒數計時並啟動遊戲 (FIX 8) */
+function startBattleCountdown() {
+    let count = 5;
+    
+    // 隱藏寵物狀態畫面和按鈕，顯示遊戲畫面
+    if(petStatusScreenEl) petStatusScreenEl.style.display = 'none';
+    if(gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex'; 
+    if(startButtonWrapperEl) startButtonWrapperEl.style.display = 'none';
+    
+    // 顯示倒數提示
+    if(gamePromptEl) {
+         gamePromptEl.style.display = 'block';
+         gamePromptEl.style.fontSize = '3em';
+    }
+    
+    const countdownInterval = setInterval(() => {
+        if (count > 0) {
+            if(gamePromptEl) gamePromptEl.textContent = `戰鬥將於 ${count} 秒後開始...`;
+            count--;
+        } else {
+            clearInterval(countdownInterval);
+            if(gamePromptEl) gamePromptEl.style.display = 'none'; 
+            startGame(); // 啟動遊戲核心邏輯
+        }
+    }, 1000);
+}
+
+/** 顯示模式選擇畫面 (Solo 模式專用) */
+function showModeSelection() {
+    if(petStatusScreenEl) petStatusScreenEl.style.display = 'none';
+    if(startButtonWrapperEl) startButtonWrapperEl.style.display = 'none';
+    
+    // 顯示模式選擇畫面
+    if(modeSelectScreenEl) modeSelectScreenEl.style.display = 'flex'; 
+}
+
+function clearBattleModeCountdown() {
+    if (battleModeSelectTimer) {
+        clearTimeout(battleModeSelectTimer);
+        battleModeSelectTimer = null;
+    }
+    if (battleModeCountdownInterval) {
+        clearInterval(battleModeCountdownInterval);
+        battleModeCountdownInterval = null;
+    }
+    if (battleCountdownEl) {
+        battleCountdownEl.style.display = 'none';
+    }
+}
+
+
+/** 啟動 Solo 模式遊戲 (根據選擇的輸入方式) */
+function startSoloGame(mode) {
+    inputMode = mode;
+    
+    // 隱藏模式選擇畫面
+    if (modeSelectScreenEl) modeSelectScreenEl.style.display = 'none';
+
+    // 先關掉預覽監聽
+    keyboardPreviewActive = false;
+    document.removeEventListener('keydown', handlePreviewKeyDown);
+    document.removeEventListener('keyup', handlePreviewKeyUp);
+
+    if (mode === 'rpi') {
+        // 記錄目前是樹莓派模式
+        inputMode = 'rpi';
+
+        // 左邊顯示「鏡頭文字」，隱藏狗狗預覽
+        if (rpiCamBoxEl) rpiCamBoxEl.classList.remove('keyboard-preview-bg');
+        if (rpiCamLabelEl) {
+            rpiCamLabelEl.style.display = 'block';
+            rpiCamLabelEl.textContent = '📷 正在使用鏡頭偵測動作';
+        }
+        if (dogPreviewImgEl) dogPreviewImgEl.style.display = 'none';
+
+        // 右邊顯示 Canvas 遊戲，同時保留提示文字
+        if (gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex';
+        if (canvas) canvas.style.display = 'block';          // ★ 原本是 'none'
+        if (gamePromptEl) {
+            gamePromptEl.style.display = 'block';
+            gamePromptEl.style.fontSize = '1.2em';
+            gamePromptEl.textContent = '等待樹莓派訊號中，偵測到動作時會控制小狗跳躍 / 蹲下！';
+        }
+
+        // 啟動遊戲時間 & Dino Game 本體
+        startGame();       // 計時、結算邏輯
+        startDinoGame();   // ★ 新增：讓小恐龍遊戲開始跑
+
+        // 不綁鍵盤事件，之後用鏡頭訊號來控制
+    }
+
+
+    else if (mode === 'keyboard') {
+        // ⭐ 鍵盤模式：左邊顯示狗狗預覽，隱藏鏡頭文字
+        if (rpiCamLabelEl) rpiCamLabelEl.style.display = 'none';
+        if (rpiCamBoxEl)  rpiCamBoxEl.classList.add('keyboard-preview-bg');  // ✅ 套背景
+        if (dogPreviewImgEl) {
+            dogPreviewImgEl.style.display = 'block';
+            dogPreviewImgEl.src = './assets/pet-run.png'; // 預設跑步姿勢
+        }
+
+        // 加上有背景圖的 class
+        if (rpiCamBoxEl) rpiCamBoxEl.classList.add('keyboard-preview-bg');
+
+        // 右邊顯示 Canvas 遊戲
+        if (gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex';
+        if (canvas) canvas.style.display = 'block';
+        if (gamePromptEl) gamePromptEl.style.display = 'none';
+
+        // 1. 開始計時
+        startGame();
+
+        // 2. 綁 Dino 遊戲鍵盤
+        if (!isGameActive) {
+            document.addEventListener('keydown', handleKeyboardInput);
+            document.addEventListener('keyup', handleKeyboardInput);
+            isGameActive = true;
+        }
+
+        // 3. 啟動狗狗跑酷
+        startDinoGame();
+
+        // 4. ⭐ 啟動左邊狗狗預覽
+        keyboardPreviewActive = true;
+        document.addEventListener('keydown', handlePreviewKeyDown);
+        document.addEventListener('keyup', handlePreviewKeyUp);
+
+        if (dinoPanelTitleEl) {
+            dinoPanelTitleEl.textContent = '🎮 鍵盤模式: 挑戰小恐龍';
+        }
+    }
+}
+
+
+/** 
+ * PK 模式：依據選擇的操作方式啟動遊戲
+ * - mode: 'rpi' 或 'keyboard'
+ * - 沒選的情況會在外面傳進來 'keyboard' 當預設
+ */
+function startBattleWithMode(mode) {
+    // 先把倒數相關的東西收掉
+    clearBattleModeCountdown();
+
+    // 記住玩家選了什麼模式
+    inputMode = mode;
+
+    // 對戰模式下共用 solo 的啟動邏輯（裡面會呼叫 startGame / startDinoGame）
+    startSoloGame(mode);
+
+    // 針對 PK 模式微調標題
+    if (gameMode === 'battle') {
+        if (mode === 'keyboard' && dinoPanelTitleEl) {
+            dinoPanelTitleEl.textContent = '⚔️ 對戰模式：小恐龍對決（鍵盤）';
+        }
+        if (mode === 'rpi' && dinoPanelTitleEl) {
+            dinoPanelTitleEl.textContent = '⚔️ 對戰模式：樹莓派運動偵測';
+        }
+    }
+}
+
+// ======================================================
+// 5. 初始化與事件綁定
+// ======================================================
+
+// 讓其他模組可以訪問分數和繪圖
+window.game_state = {
+    getScore: () => myGameScore,
+    addScore: (points) => {
+        myGameScore += points;
+    },
+    drawGame: drawGame, // 暴露繪圖函數
+    isRunning: () => gameRunning, // 暴露遊戲運行狀態
+    getGameMode: () => gameMode, // 暴露遊戲模式
+    sendBattleUpdate: (score) => {
+        if (gameMode === 'battle') {
+            // ... (原本的 sendMessage 邏輯) ...
+        }
+    },
+    // ⭐ 新增 forceEnd 函數，用於碰撞時強制結束
+    forceEnd: () => {
+        if (gameRunning) {
+            clearInterval(gameInterval); // 停止計時器
+            endGame(); // 呼叫結算邏輯
+        }
+    }
+};
+
+function initGameSetup() {
+    // startSoloGame
+    gameMode = localStorage.getItem('game_mode');
+    mySpirit = Number(localStorage.getItem('my_spirit_value')) || 50;
+    initialSpirit = mySpirit;
+    const myDisplayName = localStorage.getItem('my_display_name') || '我';
+    
+    // 1. 更新右上角狀態欄 (FIX 1)
+    if(playerStatusEl) playerStatusEl.textContent = `精神狀態: ${Math.floor(mySpirit)}/100`;
+
+    // 2. 更新寵物初始圖片 (FIX 6)
+    const { statusImg } = getSpiritInfo(mySpirit);
+    if(gamePetImgEl) gamePetImgEl.src = statusImg;
+
+    // 確保在遊戲開始前，字卡樣式被移除，並設定為深色背景下的白色文字
+    if(petStatusScreenEl) {
+        petStatusScreenEl.classList.remove('pixel-border-box');
+        petStatusScreenEl.style.backgroundColor = 'transparent';
+        petStatusScreenEl.style.boxShadow = 'none';
+        petStatusScreenEl.style.color = 'white'; 
+        petStatusScreenEl.style.padding = '20px'; 
+        // 重設 FIX 3/4 的樣式
+        petStatusScreenEl.style.flexGrow = '0'; 
+        petStatusScreenEl.style.display = 'block'; // 恢復默認
+    }
+    if(gamePetMessageEl) {
+        gamePetMessageEl.style.color = 'white'; 
+    }
+
+    if (gameMode === 'battle') {
+        // --- 對戰模式邏輯 (battle) ---
+        const opponentName = localStorage.getItem('opponent_name') || '對手';
+        const opponentSpirit = Number(localStorage.getItem('opponent_spirit_value')) || 50;
+        const { statusImg: opponentStatusImg } = getSpiritInfo(opponentSpirit);
+
+        if (dinoPanelTitleEl) dinoPanelTitleEl.textContent = `⚔️ 對戰模式: VS ${opponentName}`;
+        if (opponentStatusEl) opponentStatusEl.style.display = 'flex';
+
+        if (opponentNameEl) opponentNameEl.textContent = opponentName;
+        if (opponentScoreEl) opponentScoreEl.textContent = '分數: 0';
+        if (opponentAvatarEl) opponentAvatarEl.src = opponentStatusImg;
+
+        if (gamePetMessageEl) {
+            gamePetMessageEl.textContent = '請在 5 秒內選擇遊玩模式，未選擇將預設為鍵盤模式。';
+        }
+
+        // 隱藏原本的開始按鈕，改用模式選擇
+        if (startButtonWrapperEl) startButtonWrapperEl.style.display = 'none';
+        if (petStatusScreenEl) petStatusScreenEl.style.display = 'none';
+
+        // 顯示模式選擇畫面
+        if (modeSelectScreenEl) modeSelectScreenEl.style.display = 'flex';
+
+        // 顯示圓形倒數標籤，從 5 開始
+        if (battleCountdownEl && battleCountdownTextEl) {
+            let remain = BATTLE_MODE_SELECT_SECONDS;
+            battleCountdownTextEl.textContent = remain.toString();
+            battleCountdownEl.style.display = 'flex';
+
+            battleModeCountdownInterval = setInterval(() => {
+                remain -= 1;
+                if (remain >= 0 && battleCountdownTextEl) {
+                    battleCountdownTextEl.textContent = remain.toString();
+                }
+                if (remain <= 0) {
+                    clearInterval(battleModeCountdownInterval);
+                    battleModeCountdownInterval = null;
+                }
+            }, 1000);
+        }
+
+        // 綁定兩個模式按鈕（PK 版）
+        if (rpiModeBtn) {
+            rpiModeBtn.onclick = () => startBattleWithMode('rpi');
+        }
+        if (keyboardModeBtn) {
+            keyboardModeBtn.onclick = () => startBattleWithMode('keyboard');
+        }
+
+        // 5 秒內沒選，就預設鍵盤
+        battleModeSelectTimer = setTimeout(() => {
+            if (!inputMode) {
+                startBattleWithMode('keyboard');
+            }
+        }, BATTLE_MODE_SELECT_SECONDS * 1000);
+
+    }
+    else if (gameMode === 'solo') {
+        // --- 單人模式邏輯 (solo) ---
+        if(dinoPanelTitleEl) dinoPanelTitleEl.textContent = `🏃 體力補充區`;
+        if(opponentStatusEl) opponentStatusEl.style.display = 'none';
+        
+        if(gamePetMessageEl) gamePetMessageEl.textContent = `點擊下方按鈕開始補充體力！當前體力: ${Math.floor(mySpirit)}/100`;
+
+        // ✅ 改成打開模式選擇畫面
+        if(startGameBtn) {
+            startGameBtn.removeEventListener('click', startBattleCountdown);
+            startGameBtn.textContent = '選擇體力補充方式';
+            startGameBtn.onclick = showModeSelection;  // <<< 這裡不再直接 startGame();
+        }
+
+         // 🔹 綁定模式選擇按鈕
+        if (rpiModeBtn) {
+            rpiModeBtn.onclick = () => startSoloGame('rpi');
+        }
+        if (keyboardModeBtn) {
+            keyboardModeBtn.onclick = () => startSoloGame('keyboard');
+        }
+
+        if(startButtonWrapperEl) startButtonWrapperEl.style.display = 'block';
+    } else {
+        alert('遊戲模式錯誤，返回大廳。');
+        window.location.href = 'lobby.html';
+        return;
     }
 
     // 處理返回大廳按鈕
     if(backToLobbyBtn) {
         backToLobbyBtn.addEventListener('click', () => {
-            window.location.href = 'lobby.html';
+             if (gameRunning) {
+                 if (!confirm('遊戲尚未結束，確定要返回大廳嗎？遊戲結果將不予計算。')) {
+                     return;
+                 }
+             }
+             window.location.href = 'lobby.html';
         });
     }
 }
 
-// ======================================================
-// 腳本入口點
-// ======================================================
-initializeGame();
+// 啟動遊戲初始化
+document.addEventListener('DOMContentLoaded', initGameSetup);

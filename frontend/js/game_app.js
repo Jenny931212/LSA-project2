@@ -27,10 +27,12 @@ const startButtonWrapperEl = document.getElementById('start-button-wrapper'); //
 const backToLobbyBtn = document.getElementById('back-to-lobby-btn');
 const gameTitleEl = document.getElementById('game-title');
 
+
 // 左邊鏡頭 / 狗狗預覽區
 const rpiCamBoxEl = document.getElementById('rpi-cam-box');
 const rpiCamLabelEl = document.getElementById('rpi-cam-label');
 const dogPreviewImgEl = document.getElementById('dog-preview');
+const rpiVideoEl = document.getElementById('rpi-video');  // ⭐ 新增：鏡頭 video
 
 // 鍵盤模式下，是否開啟預覽狗狗
 let keyboardPreviewActive = false;
@@ -537,6 +539,12 @@ async function startSoloGame(mode) {
         // ⭐ 鍵盤模式：左邊顯示狗狗預覽，隱藏鏡頭文字
         if (rpiCamLabelEl) rpiCamLabelEl.style.display = 'none';
         if (rpiCamBoxEl)  rpiCamBoxEl.classList.add('keyboard-preview-bg');
+
+        // ⭐ 關閉鏡頭 video，不要那個黑框
+        if (rpiVideoEl) {
+            rpiVideoEl.style.display = 'none';
+        }
+        
         if (dogPreviewImgEl) {
             dogPreviewImgEl.style.display = 'block';
             dogPreviewImgEl.src = './assets/pet-run.png';

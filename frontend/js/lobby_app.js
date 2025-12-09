@@ -327,43 +327,74 @@ function getOrCreateOtherPet(userId, displayName, initialX, initialY) {
 
 function handlePetClick(e) {
     const petAvatar = e.target.closest('.pet-avatar');
-    petInfoCard.style.display = 'none'; closeChatBox(); closeGlobalModal();
-    document.querySelectorAll('.pet-avatar.selected').forEach((el) => el.classList.remove('selected'));
+
+    // 先收掉各種浮動 UI
+    petInfoCard.style.display = 'none';
+    closeChatBox();
+    closeGlobalModal();
+
+    // 取消其他已選取的寵物高亮
+    document.querySelectorAll('.pet-avatar.selected')
+        .forEach((el) => el.classList.remove('selected'));
+
     if (!petAvatar) return;
+
     petAvatar.classList.add('selected');
-    
+
+    // 計算資訊卡位置（只在點別人時會真的顯示）
     const rect = petAvatar.getBoundingClientRect();
     const CARD_WIDTH = 180;
     petInfoCard.style.left = `${rect.left + window.scrollX + rect.width / 2 - CARD_WIDTH / 2}px`;
     petInfoCard.style.top = `${rect.top + window.scrollY - petInfoCard.offsetHeight - 10}px`;
-    
-    const clickedUserId = petAvatar.getAttribute('data-user-id') ? Number(petAvatar.getAttribute('data-user-id')) : currentMyUserId;
+
+    // 透過 data-user-id 判斷這隻狗屬於誰，沒有的話視為自己
+    const clickedUserIdAttr = petAvatar.getAttribute('data-user-id');
+    const clickedUserId = clickedUserIdAttr
+        ? Number(clickedUserIdAttr)
+        : currentMyUserId;
+
     const playerState = allPlayers[clickedUserId] || {};
 
-    if (clickedUserId === currentMyUserId) {
-        // 點擊自己
-        // 暫時不處理單人遊戲跳轉，保持在 Lobby
-        // localStorage.setItem('game_mode', 'solo'); localStorage.setItem('my_spirit_value', localStorage.getItem('my_spirit_value') || 85); window.location.href = 'game.html';
-    } else {
-        // 點擊其他玩家
-        targetUserId = clickedUserId; 
-        targetPetName = playerState.display_name || `玩家 ${targetUserId}`;
-        
-        const spiritValue = playerState.energy || 50; 
-        const scoreValue = playerState.score || 0;
-        const { statusName } = getSpiritInfo(spiritValue);
-        
-        targetPetNameTag.textContent = targetPetName; 
-        targetPetStatus.innerHTML = `精神狀態: ${spiritValue} (${statusName})<br>積分: ${scoreValue} Pts`; 
-        targetPetAvatar.src = PET_SPRITES.idle; // 這裡可以根據 pet_id 顯示特定寵物圖片
-        
-        // 檢查自己的狀態是否允許發起對戰/聊天
-        const myEnergy = Number(localStorage.getItem('my_spirit_value') || 50);
-        actionBattleBtn.disabled = myEnergy < 70;
-        actionChatBtn.disabled = myEnergy <= 30;
+    // 判斷是不是自己（兩種條件都支援，避免 HTML / JS 任一邊改動）
+    const isSelf =
+        clickedUserId === currentMyUserId ||
+        petAvatar.id === 'my-pet';
 
-        petInfoCard.style.display = 'block';
+    if (isSelf) {
+        // ✅ 點擊自己：進入單人遊戲補體力
+        console.log('點擊自己，進入體力補充。');
+
+        // 優先用伺服器同步下來的 energy，沒有就用 localStorage 或預設 85
+        const myEnergy = typeof playerState.energy === 'number'
+            ? playerState.energy
+            : Number(localStorage.getItem('my_spirit_value') || 85);
+
+        localStorage.setItem('game_mode', 'solo');
+        localStorage.setItem('my_spirit_value', String(myEnergy));
+
+        window.location.href = 'game.html';
+        return;
     }
+
+    // ===== 點擊其他玩家 =====
+    targetUserId = clickedUserId;
+    targetPetName = playerState.display_name || `玩家 ${targetUserId}`;
+
+    const spiritValue = playerState.energy || 50;
+    const scoreValue = playerState.score || 0;
+    const { statusName } = getSpiritInfo(spiritValue);
+
+    targetPetNameTag.textContent = targetPetName;
+    targetPetStatus.innerHTML =
+        `精神狀態: ${spiritValue} (${statusName})<br>積分: ${scoreValue} Pts`;
+    targetPetAvatar.src = PET_SPRITES.idle; // 之後可依 pet_id 換圖
+
+    // 檢查自己體力是否能聊天 / 對戰
+    const myEnergy = Number(localStorage.getItem('my_spirit_value') || 50);
+    actionBattleBtn.disabled = myEnergy < 70;
+    actionChatBtn.disabled = myEnergy <= 30;
+
+    petInfoCard.style.display = 'block';
 }
 
 actionChatBtn.addEventListener('click', () => { 

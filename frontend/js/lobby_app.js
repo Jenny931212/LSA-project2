@@ -707,18 +707,21 @@ function handleBattleStart(msg) {
 
     const { battle_id, player1_id, player2_id } = msg.payload;
     const opponentId = player1_id === currentMyUserId ? player2_id : player1_id;
-    const opponentName = allPlayers[opponentId] ? allPlayers[opponentId].display_name : `玩家 ${opponentId}`;
-    
-    showCustomAlert('🎉 對戰開始', `與 ${opponentName} 的對戰準備中！`, () => {
-        // 設定遊戲模式和對手資訊，並跳轉
-        localStorage.setItem('game_mode', 'battle');
-        localStorage.setItem('current_battle_id', battle_id);
-        localStorage.setItem('opponent_id', opponentId);
-        localStorage.setItem('opponent_name', opponentName);
-        // 跳轉到 game.html
-        window.location.href = 'game.html';
-    });
+    const opponentName = allPlayers[opponentId]
+        ? allPlayers[opponentId].display_name
+        : `玩家 ${opponentId}`;
+
+    showCustomAlert(
+        '🎉 對戰開始',
+        `與 ${opponentName} 的對戰準備中！\n請點擊「確認」開始準備。`,
+        () => {
+            // ✅ 不要直接跳 game.html，只告訴伺服器「我準備好了」
+            sendMessage('battle_ready', { battle_id });
+            console.log('[WS] 已送出 battle_ready', battle_id);
+        }
+    );
 }
+
 
 function handleBattleResult(msg) {
     // 戰鬥結果的處理通常在 game.html，但在 lobby 收到可能是對方斷線
@@ -742,6 +745,23 @@ function handleBattleResult(msg) {
     setTimeout(initializeLobby, 1000); 
 }
 
+function handleBattleGo(msg) {
+    const { battle_id, player1_id, player2_id } = msg.payload;
+    const opponentId = player1_id === currentMyUserId ? player2_id : player1_id;
+    const opponentName = allPlayers[opponentId]
+        ? allPlayers[opponentId].display_name
+        : `玩家 ${opponentId}`;
+
+    console.log('[WS] 收到 battle_go，雙方都準備好了，開始跳轉遊戲畫面');
+
+    // ✅ 這裡才真正設定模式 & 跳轉
+    localStorage.setItem('game_mode', 'battle');
+    localStorage.setItem('current_battle_id', battle_id);
+    localStorage.setItem('opponent_id', opponentId);
+    localStorage.setItem('opponent_name', opponentName);
+
+    window.location.href = 'game.html';
+}
 
 // 初始化邏輯
 async function initializeLobby() {
@@ -845,6 +865,7 @@ async function initializeLobby() {
     registerCallback('battle_not_allowed', handleBattleNotAllowed);
     registerCallback('battle_start', handleBattleStart);
     registerCallback('battle_result', handleBattleResult);
+    registerCallback('battle_go', handleBattleGo); 
 
     // [修正] 將包含 score 的完整 petData 傳給 init
     initWebSocket(token, currentMyUserId, myPetData);

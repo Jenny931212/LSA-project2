@@ -478,7 +478,7 @@ function clearBattleModeCountdown() {
 
 
 /** 啟動 Solo 模式遊戲 (根據選擇的輸入方式) */
-function startSoloGame(mode) {
+async function startSoloGame(mode) {
     inputMode = mode;
     
     // 隱藏模式選擇畫面
@@ -495,21 +495,33 @@ function startSoloGame(mode) {
         if (rpiCamLabelEl) rpiCamLabelEl.style.display = 'block';
         if (dogPreviewImgEl) dogPreviewImgEl.style.display = 'none';
 
-        // 右邊顯示 Canvas 遊戲（和鍵盤模式一樣）
+        // 右邊先顯示「準備中」畫面，不要馬上開始遊戲
         if (gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex';
         if (canvas) canvas.style.display = 'block';
         if (gamePromptEl) {
             gamePromptEl.style.display = 'block';
-            gamePromptEl.style.fontSize = '1em';
-            gamePromptEl.textContent = '請在鏡頭前跳躍 / 蹲下操作小恐龍，躲避障礙物！';
+            gamePromptEl.style.fontSize = '1.1em';
+            gamePromptEl.textContent = '鏡頭與偵測模型初始化中，請稍候…';
+        }
+
+        // ⭐⭐ 關鍵：先等鏡頭 + MoveNet 準備好
+        const ok = await startWebcamControl();
+        if (!ok) {
+            // 初始化失敗，顯示錯誤並退回
+            if (gamePromptEl) {
+                gamePromptEl.textContent = '鏡頭初始化失敗，請檢查權限或重新整理頁面。';
+            }
+            return;
+        }
+
+        // ✅ 到這裡代表鏡頭與姿態偵測都 ready 才開始遊戲
+        if (gamePromptEl) {
+            gamePromptEl.style.display = 'none';
         }
 
         // 啟動計時 + Dino 遊戲
         startGame();
         startDinoGame();
-
-        // 啟動鏡頭 + 姿態偵測（不等它完成也沒關係）
-        startWebcamControl();
 
         if (dinoPanelTitleEl) {
             dinoPanelTitleEl.textContent = '🏃 鏡頭模式：運動控制小恐龍';
@@ -560,7 +572,7 @@ async function startWebcamControl() {
 
     if (!videoEl) {
         console.error("找不到 #webcam-video");
-        return;
+        return false;
     }
 
     try {
@@ -583,13 +595,18 @@ async function startWebcamControl() {
             () => duckByExternalInput()
         );
 
+        console.log("✅ 鏡頭 + 姿態偵測準備完成");
+        return true;
+
     } catch (err) {
         console.error("啟動攝影機或姿態偵測失敗：", err);
         if (labelEl) {
             labelEl.textContent = '❌ 無法開啟攝影機，請檢查權限或裝置。';
         }
+        return false;
     }
 }
+
 
 
 /** 

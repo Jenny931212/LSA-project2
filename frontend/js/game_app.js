@@ -248,8 +248,10 @@ function endGame() {
         finalPetImg = getSpiritInfo(newSpirit).statusImg;
         
     } 
-    // 處理 BATTLE 模式的結果顯示 (FIX 7)
+    
+    // 處理 BATTLE 模式的結果顯示
     else if (gameMode === 'battle') {
+        // ⭐ 1. 先自己本地算一次結果（讓你看畫面）
         let resultText;
         if (myGameScore > opponentScore) {
             resultText = `<span style="color: ${WIN_COLOR};">🏆 獲勝！</span>`;
@@ -262,7 +264,6 @@ function endGame() {
             finalPetImg = './assets/pet-resting.png'; 
         }
 
-        // FIX 3: 確保結算文字置中
         finalMessage = `
             <div style="font-size: 1.2em; line-height: 1.8; text-align: center;">
                 ⚔️ 對戰結束！<br>
@@ -272,16 +273,21 @@ function endGame() {
                 最終結果：${resultText}
             </div>
         `;
-        
-        sendMessage('game_end', {
-            final_score: myGameScore,
-            game_id: localStorage.getItem('game_id')
-        });
-        
+
+        // ⭐ 2. 正式把這場戰鬥的結果送給 wsA
+        const battleId = localStorage.getItem('current_battle_id');
+        if (battleId) {
+            sendMessage('battle_result', {
+                battle_id: battleId,
+                score: myGameScore   // 把自己的最終分數送出去
+            });
+        }
+
         if (opponentStatusEl) {
              opponentStatusEl.style.display = 'none';
         }
     }
+
 
     // 顯示遊戲狀態畫面和結算訊息 (變為字卡)
     if(petStatusScreenEl) {
@@ -650,7 +656,18 @@ window.game_state = {
     getGameMode: () => gameMode, // 暴露遊戲模式
     sendBattleUpdate: (score) => {
         if (gameMode === 'battle') {
-            // ... (原本的 sendMessage 邏輯) ...
+            const battleId = localStorage.getItem('current_battle_id');
+            if (!battleId) return;
+
+            // ⭐ 告訴 wsA：這場對戰正在進行中，並同步我的當前分數
+            sendMessage('battle_update', {
+                battle_id: battleId,
+                score: score,
+                state: 'running'
+            });
+        }
+    },
+
         }
     },
     // ⭐ 新增 forceEnd 函數，用於碰撞時強制結束

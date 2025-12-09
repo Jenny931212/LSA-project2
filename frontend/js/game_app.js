@@ -1,8 +1,20 @@
 // frontend/js/game_app.js (最終 Web Socket 準備版本 - 點擊遊戲邏輯)
 
 import { getPetStatus } from './api_client.js';
-import { sendMessage } from './websocket_client.js'; // 引入 WS 發送功能
-import { handleKeyboardInput, startDinoGame, stopDinoGame } from './dino_game.js';
+import { sendMessage } from './websocket_client.js';
+import { 
+    handleKeyboardInput, 
+    startDinoGame, 
+    stopDinoGame,
+    jumpByExternalInput,
+    duckByExternalInput
+} from './dino_game.js';
+
+import { 
+    initPoseDetector, 
+    startPoseLoop, 
+    stopPoseLoop 
+} from './webcam_pose.js';
 
 // ======================================================
 // 1. DOM 元素定義
@@ -36,6 +48,8 @@ const battleCountdownTextEl = document.getElementById('battle-mode-countdown-tex
 // 新增狀態變數
 let inputMode = ''; // 'rpi' 或 'keyboard'
 let isGameActive = false; // 追蹤遊戲是否在運行 (避免重複綁定/解綁)
+let webcamStream = null;   // 儲存 getUserMedia 拿到的 stream
+
 
 // ⭐ PK 模式：選擇操作方式倒數用
 let battleModeSelectTimer = null;
@@ -330,6 +344,15 @@ function endGame() {
         keyboardPreviewActive = false;
     }
 
+    // ⭐ 鏡頭模式：結束時要關閉姿態偵測與攝影機
+    if (inputMode === 'rpi') {
+        stopPoseLoop();
+        if (webcamStream) {
+            webcamStream.getTracks().forEach(t => t.stop());
+            webcamStream = null;
+        }
+    }
+
     // 按鈕邏輯 (FIX 5: 將按鈕移動到字卡內)
     if(startGameBtn) {
         startGameBtn.style.display = 'block'; 
@@ -461,53 +484,46 @@ function startSoloGame(mode) {
     // 隱藏模式選擇畫面
     if (modeSelectScreenEl) modeSelectScreenEl.style.display = 'none';
 
-    // 先關掉預覽監聽
+    // 先關掉「鍵盤預覽狗狗」監聽
     keyboardPreviewActive = false;
     document.removeEventListener('keydown', handlePreviewKeyDown);
     document.removeEventListener('keyup', handlePreviewKeyUp);
 
     if (mode === 'rpi') {
-        // 記錄目前是樹莓派模式
-        inputMode = 'rpi';
-
-        // 左邊顯示「鏡頭文字」，隱藏狗狗預覽
+        // ⭐ 鏡頭模式：左邊顯示鏡頭，隱藏狗狗 preview
         if (rpiCamBoxEl) rpiCamBoxEl.classList.remove('keyboard-preview-bg');
-        if (rpiCamLabelEl) {
-            rpiCamLabelEl.style.display = 'block';
-            rpiCamLabelEl.textContent = '📷 正在使用鏡頭偵測動作';
-        }
+        if (rpiCamLabelEl) rpiCamLabelEl.style.display = 'block';
         if (dogPreviewImgEl) dogPreviewImgEl.style.display = 'none';
 
-        // 右邊顯示 Canvas 遊戲，同時保留提示文字
+        // 右邊顯示 Canvas 遊戲（和鍵盤模式一樣）
         if (gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex';
-        if (canvas) canvas.style.display = 'block';          // ★ 原本是 'none'
+        if (canvas) canvas.style.display = 'block';
         if (gamePromptEl) {
             gamePromptEl.style.display = 'block';
-            gamePromptEl.style.fontSize = '1.2em';
-            gamePromptEl.textContent = '等待樹莓派訊號中，偵測到動作時會控制小狗跳躍 / 蹲下！';
+            gamePromptEl.style.fontSize = '1em';
+            gamePromptEl.textContent = '請在鏡頭前跳躍 / 蹲下操作小恐龍，躲避障礙物！';
         }
 
-        // 啟動遊戲時間 & Dino Game 本體
-        startGame();       // 計時、結算邏輯
-        startDinoGame();   // ★ 新增：讓小恐龍遊戲開始跑
+        // 啟動計時 + Dino 遊戲
+        startGame();
+        startDinoGame();
 
-        // 不綁鍵盤事件，之後用鏡頭訊號來控制
-    }
+        // 啟動鏡頭 + 姿態偵測（不等它完成也沒關係）
+        startWebcamControl();
 
+        if (dinoPanelTitleEl) {
+            dinoPanelTitleEl.textContent = '🏃 鏡頭模式：運動控制小恐龍';
+        }
 
-    else if (mode === 'keyboard') {
+    } else if (mode === 'keyboard') {
         // ⭐ 鍵盤模式：左邊顯示狗狗預覽，隱藏鏡頭文字
         if (rpiCamLabelEl) rpiCamLabelEl.style.display = 'none';
-        if (rpiCamBoxEl)  rpiCamBoxEl.classList.add('keyboard-preview-bg');  // ✅ 套背景
+        if (rpiCamBoxEl)  rpiCamBoxEl.classList.add('keyboard-preview-bg');
         if (dogPreviewImgEl) {
             dogPreviewImgEl.style.display = 'block';
-            dogPreviewImgEl.src = './assets/pet-run.png'; // 預設跑步姿勢
+            dogPreviewImgEl.src = './assets/pet-run.png';
         }
 
-        // 加上有背景圖的 class
-        if (rpiCamBoxEl) rpiCamBoxEl.classList.add('keyboard-preview-bg');
-
-        // 右邊顯示 Canvas 遊戲
         if (gameIframeScreenEl) gameIframeScreenEl.style.display = 'flex';
         if (canvas) canvas.style.display = 'block';
         if (gamePromptEl) gamePromptEl.style.display = 'none';
@@ -522,16 +538,55 @@ function startSoloGame(mode) {
             isGameActive = true;
         }
 
-        // 3. 啟動狗狗跑酷
+        // 3. 啟動 Dino 遊戲
         startDinoGame();
 
-        // 4. ⭐ 啟動左邊狗狗預覽
+        // 4. 左邊狗狗預覽綁鍵盤
         keyboardPreviewActive = true;
         document.addEventListener('keydown', handlePreviewKeyDown);
         document.addEventListener('keyup', handlePreviewKeyUp);
 
         if (dinoPanelTitleEl) {
             dinoPanelTitleEl.textContent = '🎮 鍵盤模式: 挑戰小恐龍';
+        }
+    }
+}
+
+
+
+async function startWebcamControl() {
+    const videoEl = document.getElementById('webcam-video');
+    const labelEl = document.getElementById('rpi-cam-label');
+
+    if (!videoEl) {
+        console.error("找不到 #webcam-video");
+        return;
+    }
+
+    try {
+        // 1. 取得攝影機畫面
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        webcamStream = stream;
+        videoEl.srcObject = stream;
+        await videoEl.play();
+
+        if (labelEl) {
+            labelEl.textContent = '鏡頭運作中：跳 = Dino 跳，蹲 = Dino 蹲';
+        }
+
+        // 2. 初始化 MoveNet
+        await initPoseDetector(videoEl);
+
+        // 3. 開始持續偵測，偵測到動作就控制小恐龍
+        startPoseLoop(
+            () => jumpByExternalInput(),
+            () => duckByExternalInput()
+        );
+
+    } catch (err) {
+        console.error("啟動攝影機或姿態偵測失敗：", err);
+        if (labelEl) {
+            labelEl.textContent = '❌ 無法開啟攝影機，請檢查權限或裝置。';
         }
     }
 }
@@ -713,6 +768,13 @@ function initGameSetup() {
                  if (!confirm('遊戲尚未結束，確定要返回大廳嗎？遊戲結果將不予計算。')) {
                      return;
                  }
+             }
+
+            // ⭐ 返回大廳前關掉偵測與攝影機
+             stopPoseLoop();
+             if (webcamStream) {
+                 webcamStream.getTracks().forEach(t => t.stop());
+                 webcamStream = null;
              }
              window.location.href = 'lobby.html';
         });

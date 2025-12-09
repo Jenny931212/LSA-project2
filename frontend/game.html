@@ -5,6 +5,30 @@
     <title>寵物遊戲區</title>
     <link rel="stylesheet" href="./css/style.css"> 
     <style>
+        /* -------------------- 遊戲面板基礎樣式 (部分保留) -------------------- */
+        :root {
+            /* 核心基底色 */
+            --pixel-black: #1e1e1e;
+            --pixel-dark-gray: #2b2b2b;
+            --pixel-gray: #5a5a5a;
+            --pixel-light-gray: #dcdcdc;
+            --pixel-white: #ffffff;
+
+            /* 低飽和的 highlight 色 */
+            --pixel-yellow: #e6d267;    /* 淡黃，比之前柔和 */
+            --pixel-green: #7fbf7f;     /* 柔綠，不刺眼 */
+            --pixel-blue: #7fb0d9;      /* 柔藍，接近你 lobby 的藍 */
+            --pixel-orange: #d9a05a;    /* 柔橘，不會太亮 */
+
+            --border-width: 4px;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;              /* 🔒 禁止整頁滾動 */
+        }
         body {
             display: flex;
             flex-direction: column;
@@ -24,11 +48,17 @@
             border-bottom: 4px solid var(--pixel-white); /* 白色邊線 */
         }
         #back-to-lobby-btn {
-            /* 確保按鈕也是像素風格 */
             border: 3px solid white;
-            background-color: transparent;
-            color: white;
-            padding: 5px 10px;
+            background-color: var(--pixel-yellow);   /* ⭐ 有實心底色 */
+            color: var(--pixel-black);
+            padding: 5px 12px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 4px 4px 0 var(--pixel-black);
+        }
+
+        #back-to-lobby-btn:hover {
+            background-color: var(--pixel-orange);
         }
 
         .game-container {
@@ -36,6 +66,8 @@
             display: flex;
             padding: 20px;
             gap: 20px;
+            box-sizing: border-box;
+            overflow: hidden; 
         }
         .game-panel {
             flex: 1;
@@ -53,16 +85,16 @@
             border: 2px solid white;
         }
         .pixel-game-box {
-            min-height: 400px;
-            flex-grow: 1;
+            flex: 1;
+            min-height: 0;                  /* ⭐ 讓 flex 容器可以被壓縮，不會硬撐 400px */
             display: flex;
             justify-content: center;
             align-items: center;
-            background-color: var(--pixel-white); /* 主要顯示區域使用白色底 */
+            background-color: var(--pixel-white);
             padding: 5px;
-            /* 強制套用 pixel-border-box 樣式 */
             border: var(--border-width) solid var(--pixel-black);
             box-shadow: var(--border-width) var(--border-width) 0px 0px var(--pixel-black);
+            box-sizing: border-box;
         }
 
         /* 樹莓派鏡頭區 */
@@ -86,14 +118,44 @@
             color: #00ff00; /* 綠色文字 */
             position: relative;
             overflow: hidden; 
+            /* 確保為 column 模式的彈性容器，以利內部元素 (字卡) 佈滿 */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: stretch;
         }
+
+        /* 遊戲畫面容器 */
+        #game-iframe-screen {
+            width: 100%;
+            height: 100%;
+            display: none;                /* 一開始由 JS 控制顯示 */
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        /* 小恐龍 Canvas 填滿右半格 */
+        #game-canvas {
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            border: 4px solid var(--pixel-yellow);
+            box-sizing: border-box;
+        }
+
         #start-game-btn {
-            /* 修正：移除絕對定位，讓它回到正常流，並在右側對齊 */
-            padding: 10px 20px;
-            font-size: 1.2em;
-            background-color: var(--pixel-green); /* 亮綠色強調 */
+            padding: 10px 24px;
+            font-size: 1.1em;
+            background-color: var(--pixel-green);    /* ⭐ 明亮綠色按鈕 */
             color: var(--pixel-black);
-            /* 移除所有定位相關屬性 */
+            border: 3px solid var(--pixel-black);
+            box-shadow: 4px 4px 0 var(--pixel-black);
+            cursor: pointer;
+        }
+
+        #start-game-btn:hover {
+            background-color: var(--pixel-yellow);
         }
 
         /* 對戰模式 UI */
@@ -121,6 +183,62 @@
             height: 32px;
             image-rendering: pixelated;
         }
+        /* PK 模式選擇時的圓形倒數標籤 */
+        .battle-countdown-badge {
+            position: absolute;
+            top: 25%;                          /* ⭐ 往上拉一些，大概在兩個按鈕上方 */
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: var(--pixel-light-gray);
+            border: 4px solid var(--pixel-black);
+            box-shadow: var(--border-width) var(--border-width) 0 0 var(--pixel-black);
+            display: none;                     /* 由 JS 控制出現 */
+            justify-content: center;
+            align-items: center;
+            font-family: monospace;
+            font-size: 28px;
+            color: var(--pixel-black);
+            z-index: 30;
+        }
+        #rpi-mode-btn,
+        #keyboard-mode-btn {
+            border: 3px solid var(--pixel-black);
+            box-shadow: 4px 4px 0 var(--pixel-black);
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #rpi-mode-btn {
+            background-color: var(--pixel-yellow);
+            color: var(--pixel-black);
+        }
+
+        #keyboard-mode-btn {
+            background-color: var(--pixel-blue);
+            color: var(--pixel-black);
+        }
+
+        #rpi-mode-btn:hover,
+        #keyboard-mode-btn:hover {
+            filter: brightness(1.1);
+        }
+
+        /* 鍵盤模式：左半邊狗狗預覽用背景 */
+        #rpi-cam-box.keyboard-preview-bg {
+            background-image: url('./assets/left-background.png'); /* 換成你想用的圖 */
+            background-size: cover;
+            background-position: center;   /* 置中 */
+            background-repeat: no-repeat;
+            background-color: #000;        /* 背景底色，可改 */
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
     </style>
 </head>
 <body>
@@ -137,7 +255,21 @@
         <div id="rpi-cam-panel" class="game-panel">
             <h2 class="panel-title" id="rpi-panel-title">即時鏡頭辨識區 (體力補充)</h2>
             <div id="rpi-cam-box" class="pixel-game-box"> 
-                <h3>樹莓派影像串流中...</h3>
+                <h3 id="rpi-cam-label">鏡頭載入中，請允許瀏覽器使用攝影機...</h3>
+
+                <!-- ⭐ 新增：前端鏡頭畫面 -->
+                <video id="webcam-video"
+               autoplay
+               playsinline
+               style="width: 100%; max-width: 480px; border: 4px solid black; image-rendering: pixelated;">
+                </video>
+
+                <!-- ⭐ 鍵盤模式用的狗狗預覽（平常隱藏） -->
+                <img id="dog-preview" 
+                src="./assets/pet-run.png" 
+                alt="操作示意狗狗"
+                class="pixel-img"
+                style="display:none; width: 500px; image-rendering: pixelated;">
             </div>
         </div>
 
@@ -146,6 +278,11 @@
     
             <div id="dino-game-box" class="pixel-game-box" style="position: relative; flex-direction: column;">
         
+                <!-- ⭐ PK 模式用的圓形倒數標籤 -->
+                <div id="battle-mode-countdown" class="battle-countdown-badge" style="display: none;">
+                    <span id="battle-mode-countdown-text">5</span>
+                </div>
+
                 <div id="status-bar-container" style="position: absolute; top: 10px; left: 10px; width: 80%; display: none;">
                     <p style="margin: 0; font-size: 12px; color: var(--pixel-black);">體力值</p>
                     <progress id="pet-stamina-bar" value="100" max="100" style="width: 100%;"></progress>
@@ -156,26 +293,46 @@
                 <p id="game-pet-message">點擊下方按鈕開始補充體力！</p>
             </div>
         
-            <div id="game-iframe-screen" style="display: none; width: 100%; height: 100%; justify-content: center; align-items: center;">
-                <h1 style="color: lime;">[ 小恐龍遊戲 iFrame / Canvas ]</h1>
+                        <div id="mode-select-screen" style="display: none; width: 100%; height: 100%; flex-direction: column; justify-content: center; align-items: center; background-color: #333;">
+                <h3 style="color: white; margin-bottom: 30px;">請選擇體力補充方式</h3>
+                <div style="display: flex; gap: 40px;">
+                    <button id="rpi-mode-btn" class="pixel-border-box" 
+                        style="padding: 15px 30px; font-size: 1.2em; background-color: var(--pixel-yellow);">
+                        💻 樹莓派鏡頭辨識
+                    </button>
+                    <button id="keyboard-mode-btn" class="pixel-border-box" 
+                        style="padding: 15px 30px; font-size: 1.2em; background-color: var(--pixel-green);">
+                        🎮 鍵盤手動操作
+                    </button>
+                </div>
+            </div>
+        
+            <div id="game-iframe-screen" style="display: none; width: 100%; height: 100%; justify-content: center; align-items: center; flex-direction: column;">
+                <canvas id="game-canvas" width="400" height="400"></canvas>
+                <p id="game-prompt" style="position: absolute; top: 100px; color: white;"></p>
             </div>
 
-            <div id="opponent-status" class="pixel-border-box" style="position: absolute; top: 10px; right: 10px; display: none; padding: 5px; font-size: 12px;">
+            <div id="opponent-status" class="pixel-border-box" 
+                style="position: absolute; top: 10px; right: 10px; display: none; padding: 15px; font-size: 15px; color: var(--pixel-black);"> 
                 <div style="display: flex; align-items: center; gap: 5px;">
-                    <img id="opponent-pet-avatar" src="./assets/pet-resting.png" alt="對手寵物" class="pixel-img" style="width: 32px;">
+                    <img id="opponent-pet-avatar" src="./assets/pet-resting.png" alt="對手寵物" class="pixel-img" style="width: 48px;padding-right: 3px;">
                     <div>
-                        <p id="opponent-pet-name-tag" style="margin: 0; font-weight: bold;">對手名稱</p>
-                        <p id="opponent-score" style="margin: 0; color: yellow;">分數: 0</p>
+                        <p id="opponent-pet-name-tag" style="margin: 0; font-weight: bold;padding-right: 5px;">對手名稱</p>
+                        <p id="opponent-score" style="margin: 0; color: #cc0066;">分數: 0</p>
                     </div>
                 </div>
             </div>
-        </div>
-    
-        <div style="text-align: right; margin-top: 10px;">
-            <button id="start-game-btn" class="pixel-border-box">開始運動辨識</button>
-        </div>
-    </div>
-    </main>
+            
+            <div id="start-button-wrapper" style="text-align: center; margin-top: 20px;">
+                <button id="start-game-btn" class="pixel-border-box">開始運動辨識</button>
+            </div>
+        </div> </div> </main>
+
+    <!-- 先載入 TensorFlow.js 及姿態偵測模型（用 CDN） -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
     
     <script type="module" src="./js/game_app.js"></script>
 </body>

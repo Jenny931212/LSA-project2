@@ -653,29 +653,32 @@ window.game_state = {
     getScore: () => myGameScore,
     addScore: (points) => {
         myGameScore += points;
+        if (myScoreValueEl) {
+            myScoreValueEl.textContent = myGameScore;   // 更新自己的分數顯示
+        }
     },
     drawGame: drawGame,
     isRunning: () => gameRunning,
     getGameMode: () => gameMode,
-    sendBattleUpdate: (score) => {
-        if (gameMode === 'battle') {
-            const battleId = localStorage.getItem('current_battle_id');
-            if (!battleId) return;
 
-            sendMessage('battle_update', {
-                battle_id: battleId,
-                score: score,
-                state: 'running'
-            });
-        }
+    // ⭐ 每次加分後由 dino_game 呼叫，這裡負責把分數送給伺服器
+    sendBattleUpdate: (score) => {
+        if (gameMode !== 'battle') return;
+        sendMessage('battle_update_score', {
+            score: score
+        });
     },
+
+    // forceEnd 保持你原本的版本
     forceEnd: () => {
         if (gameRunning) {
             clearInterval(gameInterval);
+            gameInterval = null;
             endGame();
         }
     }
 };
+
 
 // ======================================================
 // 6. 初始化：依遊戲模式設定畫面 + WebSocket 事件
@@ -720,6 +723,55 @@ function initGameSetup() {
         if (opponentNameEl) opponentNameEl.textContent = opponentName;
         if (opponentScoreEl) opponentScoreEl.textContent = '分數: 0';
         if (opponentAvatarEl) opponentAvatarEl.src = opponentStatusImg;
+
+        // ⭐ 對手分數同步
+        registerCallback('battle_update_score', (data) => {
+            if (!data || !data.payload) return;
+
+            const fromUserId = data.user_id;              // 發這個分數的人
+            const score = data.payload.score;
+            const myId = Number(localStorage.getItem('user_id'));
+
+            if (fromUserId === myId) {
+                // 自己的分數（保險同步一次）
+                myGameScore = score;
+                if (myScoreValueEl) {
+                    myScoreValueEl.textContent = myGameScore;
+                }
+            } else {
+                // 對手的分數
+                opponentScore = score;
+                if (opponentScoreEl) {
+                    opponentScoreEl.textContent = `分數: ${opponentScore}`;
+                }
+            }
+        });
+
+
+        // ⭐ 有人死掉 → 伺服器廣播 battle_force_end → 兩邊一起進入結算
+        registerCallback('battle_force_end', (data) => {
+            const payload = data?.payload || {};
+
+            // Server 幫你把最後分數算好塞進來
+            if (typeof payload.my_final_score === 'number') {
+                myGameScore = payload.my_final_score;
+                if (myScoreValueEl) {
+                    myScoreValueEl.textContent = myGameScore;
+                }
+            }
+            if (typeof payload.opponent_final_score === 'number') {
+                opponentScore = payload.opponent_final_score;
+                if (opponentScoreEl) {
+                    opponentScoreEl.textContent = `分數: ${opponentScore}`;
+                }
+            }
+
+            // ⭐ 強制結束本地遊戲，會呼叫 endGame() → 進入你現在那個結算畫面
+            if (window.game_state && window.game_state.forceEnd) {
+                window.game_state.forceEnd();
+            }
+        });
+
 
         if (gamePetMessageEl) {
             gamePetMessageEl.textContent = '請在 5 秒內選擇遊玩模式，未選擇將預設為鍵盤模式。';
@@ -907,3 +959,5 @@ function initGameSetup() {
 
 // 啟動遊戲初始化
 document.addEventListener('DOMContentLoaded', initGameSetup);
+
+

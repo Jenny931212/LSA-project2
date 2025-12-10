@@ -49,9 +49,12 @@ const FLOOR_Y = canvas ? canvas.height - 60 : 340; // 地板線
 let DINO_WIDTH = 80;
 let DINO_HEIGHT = 50;
 
-const JUMP_VELOCITY = -13;
+const JUMP_VELOCITY = -15;
 const GRAVITY = 0.8;
-const GAME_SPEED = 5;
+const GAME_SPEED = 4;
+
+// ⭐ 外部可調整的速度倍率（1 = 原速，<1 = 變慢，>1 = 變快）
+let SPEED_SCALE = 1;
 
 // 主角狀態
 let dino = {
@@ -254,8 +257,9 @@ function updateDino() {
 
 function updateObstacles() {
     for (const obs of obstacles) {
-        const speedFactor = 1 + Math.min(difficultyLevel - 1, 0.8);
-        obs.x -= GAME_SPEED * speedFactor;
+        const difficultySpeed = 1 + Math.min(difficultyLevel - 1, 0.8);
+        const baseSpeed = GAME_SPEED * SPEED_SCALE;
+        obs.x -= baseSpeed * difficultySpeed;
 
         // 加分：完全通過恐龍
         if (!obs.isPassed && obs.x + obs.width < dino.x) {
@@ -274,10 +278,9 @@ function updateObstacles() {
         }
     }
 
-    // 移除超出畫面的障礙
+    // 下面維持不變...
     obstacles = obstacles.filter(o => o.x + o.width > 0);
 
-    // 產生新障礙物（難度隨時間上升）
     gameFrame++;
     const baseInterval   = 100;
     const spawnInterval  = Math.max(55, baseInterval - difficultyLevel * 8);
@@ -289,7 +292,6 @@ function updateObstacles() {
         gameFrame = 0;
     }
 
-    // 每隔一段時間稍微提高難度
     difficultyFrameCounter++;
     if (difficultyFrameCounter >= 300) {
         difficultyLevel += 0.4;
@@ -495,5 +497,14 @@ export function duckByExternalInput() {
             dino.isDucking = false;
             dogPose = 'run';
         }, 300);
+    }
+}
+
+// ⭐ 外部控制遊戲速度倍率（例如：鏡頭模式 1.0、鍵盤模式 0.7）
+export function setGameSpeedScale(scale) {
+    if (typeof scale === 'number' && scale > 0) {
+        SPEED_SCALE = scale;
+    } else {
+        SPEED_SCALE = 1; // 給個保險
     }
 }

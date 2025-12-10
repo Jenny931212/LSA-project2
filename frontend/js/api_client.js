@@ -94,3 +94,16 @@ export async function getPetStatus(userId = null) {
     const endpoint = `/api/pet/status?user_id=${encodeURIComponent(uid)}`;
     return callApi(endpoint, 'GET');
 }
+
+// === SOLO 模式：將新的體力值寫回後端 ===
+export async function updatePetSpirit(newSpirit) {
+    const userId = localStorage.getItem('user_id');
+    if (!userId) {
+        throw new Error("USER_ID_NOT_FOUND: 請重新登入");
+    }
+
+    return callApi('/api/pet/update-from-game', 'POST', {
+        user_id: Number(userId),
+        new_energy: newSpirit,
+    });
+}

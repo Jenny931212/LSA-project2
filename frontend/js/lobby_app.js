@@ -485,13 +485,29 @@ function handleLobbyState(msg) {
 
     // 1. 更新 allPlayers & 自己的狀態 / 積分
     allPlayers = {};
-    players.forEach((p) => {
+        players.forEach((p) => {
         allPlayers[p.user_id] = p;
 
         if (p.user_id === myId) {
-            const energy = p.energy || 50;
+            // 先拿伺服器的 energy
+            const backendEnergy = (typeof p.energy === 'number') ? p.energy : 50;
+
+            // 再看 localStorage 是否有比較新的 my_spirit_value
+            const localSpiritRaw = localStorage.getItem('my_spirit_value');
+            let localSpirit = Number(localSpiritRaw);
+            if (Number.isNaN(localSpirit)) {
+                localSpirit = null;
+            }
+
+            // 如果 local 有值而且比後端大 → 視為剛剛 solo 遊戲補到的體力
+            const energy =
+                (localSpirit !== null && localSpirit > backendEnergy)
+                    ? localSpirit
+                    : backendEnergy;
+
             const { statusName } = getSpiritInfo(energy);
 
+            // 同步到 localStorage & UI
             localStorage.setItem('my_spirit_value', String(energy));
             petLevelEl.textContent = `狀態：${energy} (${statusName})`;
             updateSpiritBadge(energy);
@@ -499,8 +515,12 @@ function handleLobbyState(msg) {
             if (playerScoreEl) {
                 playerScoreEl.textContent = `積分：${p.score || 0} Pts`;
             }
+
+            // 也更新 allPlayers 裡自己的 energy，避免後面再被舊值覆蓋
+            allPlayers[myId].energy = energy;
         }
     });
+
     updateLeaderboard();
 
     // 2. 用「伺服器的座標」決定「我自己的世界座標 & 鏡頭」
@@ -783,10 +803,28 @@ async function initializeLobby() {
 
     let myPetData = {};
     try {
-        // [修正] 從 API 取得初始資料 (含 score)
+        // 從 API 取得初始資料 (含 score)
         myPetData = await getPetStatus(currentMyUserId);
-        const spiritValue = myPetData.energy || 50;
+
+        // 1️⃣ 後端回來的體力（當作「基準值」）
+        const backendSpirit = (typeof myPetData.energy === 'number') ? myPetData.energy : 50;
         const scoreValue = myPetData.score || 0;
+
+        // 2️⃣ 看 localStorage 有沒有「更新的 my_spirit_value」
+        const localSpiritRaw = localStorage.getItem('my_spirit_value');
+        let localSpirit = Number(localSpiritRaw);
+        if (Number.isNaN(localSpirit)) {
+            localSpirit = null;
+        }
+
+        // 3️⃣ 決定真正要顯示的精神值：
+        //    - 如果 local 有值 & 比後端大，代表剛剛在 game.html 有補到體力，就用 local
+        //    - 否則用後端的數值（例如剛打完對戰，後端已經更新 DB）
+        const spiritValue =
+            (localSpirit !== null && localSpirit > backendSpirit)
+                ? localSpirit
+                : backendSpirit;
+
         const { statusName } = getSpiritInfo(spiritValue);
         
         petNameEl.textContent = `寵物：${myPetData.pet_name}`;
@@ -799,10 +837,11 @@ async function initializeLobby() {
             playerScoreEl.textContent = `積分：${scoreValue} Pts`;
         }
 
-        // 更新 local storage
+        // 4️⃣ 把最後決定的 spiritValue 寫回 localStorage
         localStorage.setItem('my_spirit_value', String(spiritValue));
-        
-        // 將 API 資料帶入 WS 初始資料
+
+        // 5️⃣ 讓要傳給 WebSocket 的初始資料也帶這個最新的體力值
+        myPetData.energy = spiritValue;
         myPetData.score = scoreValue; 
         myPetData.display_name = localStorage.getItem('display_name');
 

@@ -1,6 +1,6 @@
 // frontend/js/game_app.js (PK 對戰 + Solo + 鏡頭/鍵盤模式 最終修正版)
 
-import { getPetStatus } from './api_client.js';
+import { getPetStatus, updatePetSpirit } from './api_client.js';
 import { sendMessage, registerCallback } from './websocket_client.js';
 import { 
     handleKeyboardInput, 
@@ -209,7 +209,7 @@ function startGame() {
 }
 
 /** 遊戲結束邏輯（包含 Solo / Battle 結算） */
-function endGame() {
+async function endGame() {
     gameRunning = false;
     
     if (gameInterval) {
@@ -247,19 +247,29 @@ function endGame() {
         `; 
         
         finalPetImg = getSpiritInfo(newSpirit).statusImg;
+        try {
+            await updatePetSpirit(newSpirit);
+            console.log('[SOLO] 已將體力值更新到後端：', newSpirit);
+        } catch (err) {
+            console.error('[SOLO] 更新後端體力值失敗：', err);
+        }
     } 
     // ================= Battle 模式：勝負判定 =================
     else if (gameMode === 'battle') {
         let resultText;
+        let battleResult;
         if (myGameScore > opponentScore) {
             resultText = `<span style="color: ${WIN_COLOR};">🏆 獲勝！</span>`;
             finalPetImg = './assets/pet-win.png'; 
+            battleResult = 'win';
         } else if (myGameScore < opponentScore) {
             resultText = `<span style="color: ${LOSE_COLOR};">😭 敗北！</span>`;
             finalPetImg = './assets/pet-lose.png'; 
+            battleResult = 'lose';
         } else {
             resultText = '🤝 平手。';
             finalPetImg = './assets/pet-resting.png'; 
+            battleResult = 'draw';
         }
 
         finalMessage = `
@@ -275,9 +285,10 @@ function endGame() {
         // ⭐ 把本機結果送給 wsA（只送一次，避免接到廣播又再送）
         const battleId = localStorage.getItem('current_battle_id');
         if (battleId && !sentBattleResult) {
-            sendMessage('battle_result', {
+            sendMessage('game_end', {
                 battle_id: battleId,
-                score: myGameScore
+                final_score: myGameScore,
+                result: battleResult
             });
             sentBattleResult = true;
         }

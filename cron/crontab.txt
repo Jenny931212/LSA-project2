@@ -1,9 +1,2 @@
-# 每 20 分鐘扣一次體力
-*/20 * * * * /home/jiayen/Desktop/pet_project/backend/venv/bin/python \
-  /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.py \
-  >> /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.log 2>&1
-
-# 每 20 分鐘更新排行榜（有需要再用）
-*/20 * * * * /home/jiayen/Desktop/pet_project/backend/venv/bin/python \
-  /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.py \
-  >> /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.log 2>&1
+* * * * * /home/jiayen/Desktop/pet_project/backend/venv/bin/python /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.py >> /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.log 2>&1
+* * * * * /home/jiayen/Desktop/pet_project/backend/venv/bin/python /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.py >> /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.log 2>&1

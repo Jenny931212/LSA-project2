@@ -1,2 +1,2 @@
-* * * * * /home/jiayen/Desktop/pet_project/backend/venv/bin/python /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.py >> /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.log 2>&1
-* * * * * /home/jiayen/Desktop/pet_project/backend/venv/bin/python /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.py >> /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.log 2>&1
+* * * * * cd /home/jiayen/Desktop/pet_project/backend && ./venv/bin/python cron/energy_decay.py >> /home/jiayen/Desktop/pet_project/backend/cron/energy_decay.log 2>&1
+* * * * * cd /home/jiayen/Desktop/pet_project/backend && ./venv/bin/python cron/update_leaderboard.py >> /home/jiayen/Desktop/pet_project/backend/cron/update_leaderboard.log 2>&1

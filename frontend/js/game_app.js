@@ -1,7 +1,7 @@
 // frontend/js/game_app.js (最終 Web Socket 準備版本 - 點擊遊戲邏輯)
 
 import { getPetStatus } from './api_client.js';
-import { sendMessage } from './websocket_client.js';
+import { sendMessage, registerCallback } from './websocket_client.js';
 import { 
     handleKeyboardInput, 
     startDinoGame, 
@@ -94,6 +94,11 @@ let elapsedTime = 0;
 
 let gameRunning = false;
 let gameInterval = null;
+
+// ⭐ 對戰用的狀態旗標
+let myFinished = false;        // 我這邊的遊戲是否已經結束（送出最終成績）
+let opponentFinished = false;  // 對手是否已經結束
+
 
 function handlePreviewKeyDown(event) {
     if (!keyboardPreviewActive || !dogPreviewImgEl) return;
@@ -278,15 +283,7 @@ function endGame() {
             </div>
         `;
 
-        // ⭐ 2. 正式把這場戰鬥的結果送給 wsA
-        const battleId = localStorage.getItem('current_battle_id');
-        if (battleId) {
-            sendMessage('battle_result', {
-                battle_id: battleId,
-                score: myGameScore   // 把自己的最終分數送出去
-            });
-        }
-
+        
         if (opponentStatusEl) {
              opponentStatusEl.style.display = 'none';
         }
@@ -682,6 +679,7 @@ window.game_state = {
             // ⭐ 告訴 wsA：這場對戰正在進行中，並同步我的當前分數
             sendMessage('battle_update', {
                 battle_id: battleId,
+                user_id: myId,   // ⭐ 誰的分數
                 score: score,
                 state: 'running'
             });
@@ -689,13 +687,37 @@ window.game_state = {
     },
 
     // ⭐ 新增 forceEnd 函數，用於碰撞時強制結束
+    // ⭐ 新版 forceEnd：solo 立刻結算；battle 只是送出成績，等雙方結束再一起結算
     forceEnd: () => {
-        if (gameRunning) {
-            clearInterval(gameInterval); // 停止計時器
-            endGame(); // 呼叫結算邏輯
+        if (!gameRunning) return;
+
+        clearInterval(gameInterval);
+        gameInterval = null;
+
+        if (gameMode === 'battle') {
+            // 對戰模式：只標記自己結束 + 通知伺服器，不立刻呼叫 endGame
+            gameRunning = false;
+            myFinished = true;
+            sendLocalBattleResult();
+            // 等 WebSocket 收到雙方的 battle_result 再一起 endGame()
+        } else {
+            // 單人模式：維持以前的行為
+            endGame();
         }
     }
 };
+
+function sendLocalBattleResult() {
+    const battleId = localStorage.getItem('current_battle_id');
+    const myId = Number(localStorage.getItem('my_user_id')) || 0;
+    if (!battleId || !myId) return;
+
+    sendMessage('battle_result', {
+        battle_id: battleId,
+        user_id: myId,
+        score: myGameScore
+    });
+}
 
 function initGameSetup() {
     // startSoloGame
@@ -782,6 +804,69 @@ function initGameSetup() {
                 startBattleWithMode('keyboard');
             }
         }, BATTLE_MODE_SELECT_SECONDS * 1000);
+
+        // ==========================================================
+        // ⭐ WebSocket 對戰事件處理（就是你問的這一段）
+        // ==========================================================
+
+        // 1. 接收對手的即時分數
+        registerCallback('battle_update', (payload) => {
+            try {
+                if (!payload) return;
+                const myId = Number(localStorage.getItem('my_user_id')) || 0;
+                const battleId = localStorage.getItem('current_battle_id');
+
+                // 不是同一場對戰就忽略
+                if (!battleId || payload.battle_id !== battleId) return;
+
+                // 只處理「對手」的分數
+                if (payload.user_id && payload.user_id !== myId) {
+                    opponentScore = payload.score || 0;
+                    if (opponentScoreEl) {
+                        opponentScoreEl.textContent = `分數: ${opponentScore}`;
+                    }
+                }
+            } catch (err) {
+                console.error('battle_update handler error:', err);
+            }
+        });
+
+        // 2. 接收雙方最終成績，雙方都結束時一起結算
+        registerCallback('battle_result', (payload) => {
+            try {
+                if (!payload) return;
+                const myId = Number(localStorage.getItem('my_user_id')) || 0;
+                const battleId = localStorage.getItem('current_battle_id');
+                if (!battleId || payload.battle_id !== battleId) return;
+
+                const senderId = payload.user_id;
+                const score = payload.score || 0;
+
+                if (senderId === myId) {
+                    // 伺服器回傳自己的最終分數
+                    myFinished = true;
+                    myGameScore = score;
+                } else {
+                    // 對手的最終分數
+                    opponentFinished = true;
+                    opponentScore = score;
+                    if (opponentScoreEl) {
+                        opponentScoreEl.textContent = `分數: ${opponentScore}`;
+                    }
+                }
+
+                // ⚖️ 雙方都結束，才一起顯示結果
+                if (myFinished && opponentFinished) {
+                    // forceEnd 時已經停掉計時 & 動畫，這裡只是讓 endGame 正常跑
+                    if (!gameRunning) {
+                        gameRunning = true;
+                    }
+                    endGame();  // 用 myGameScore、opponentScore 判斷勝負並畫畫面
+                }
+            } catch (err) {
+                console.error('battle_result handler error:', err);
+            }
+        });
 
     }
     else if (gameMode === 'solo') {

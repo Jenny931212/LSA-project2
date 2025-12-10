@@ -1,8 +1,9 @@
 // frontend/js/game_app.js (PK 對戰 + Solo + 鏡頭/鍵盤模式 最終修正版)
 
 import { getPetStatus, updatePetSpirit } from './api_client.js';
-//import { sendMessage, registerCallback } from './websocket_client.js';
-import { initWebSocket, sendMessage, registerCallback } from './websocket_client.js';
+import { sendMessage, registerCallback, initWebSocket } from './websocket_client.js'; // ⭐ 多帶 initWebSocket
+//import { handleKeyboardInput, startDinoGame, stopDinoGame } from './dino_game.js';
+
 import { 
     handleKeyboardInput, 
     startDinoGame, 
@@ -648,49 +649,70 @@ function startBattleWithMode(mode) {
 }
 
 // ======================================================
-// 5. 讓 Dino 遊戲可以呼叫的全域 game_state
+// 5. 讓 Dino 遊戲可以存取的全域狀態
 // ======================================================
 window.game_state = {
+    // 目前分數
     getScore: () => myGameScore,
+
+    // 遊戲模式：'solo' 或 'battle'
+    getGameMode: () => gameMode,
+
+    // 是否正在遊戲中（給 dino_game.js 的 gameLoop / handleKeyboardInput 用）
+    isRunning: () => gameRunning,
+
+    // 加分（自己加 10 分時會呼叫）
     addScore: (points) => {
         myGameScore += points;
         if (myScoreValueEl) {
-            myScoreValueEl.textContent = myGameScore;   // 更新自己的分數顯示
+            myScoreValueEl.textContent = myGameScore;
         }
     },
-    drawGame: drawGame,
-    isRunning: () => gameRunning,
-    getGameMode: () => gameMode,
 
-    // ⭐ 每次加分後由 dino_game 呼叫，這裡負責把分數送給伺服器
+    // 繪製右上角時間 & 分數（dino_game.js 在 gameLoop 裡會呼叫）
+    drawGame: drawGame,
+
+    // ⭐ 遊戲中每次過障礙時，由 dino_game.js 呼叫
     sendBattleUpdate: (score) => {
         if (gameMode !== 'battle') return;
-        sendMessage('battle_update_score', {
-            score: score
+
+        const battleId = localStorage.getItem('current_battle_id');
+        if (!battleId) return;
+
+        sendMessage('battle_update', {
+            battle_id: battleId,
+            score: score,
+            state: 'running'
         });
     },
 
-    // forceEnd 保持你原本的版本
+    // ⭐ 撞到或收到伺服器通知時，強制結束遊戲 → 進入結算畫面
     forceEnd: () => {
         if (gameRunning) {
-            clearInterval(gameInterval);
+            gameRunning = false;           // 先把狀態關掉
+            clearInterval(gameInterval);   // 停止秒數計時
             gameInterval = null;
-            endGame();
+            endGame();                     // 跑你原本的結算字卡邏輯
         }
     }
 };
+
+
 
 
 // ======================================================
 // 6. 初始化：依遊戲模式設定畫面 + WebSocket 事件
 // ======================================================
 function initGameSetup() {
-    // ⭐ 先連 WebSocket（game.html 也是新的一頁，要自己連）
+    // ⭐ 先建立 WebSocket 連線（這一頁重新載入後，前一頁的 WS 已經消失了）
     const token = localStorage.getItem('user_token');
     const userId = localStorage.getItem('user_id');
 
-    // 這裡 initialData 可以先給空就好
-    initWebSocket(token, userId, {});
+    if (token && userId) {
+        initWebSocket(token, userId);
+    } else {
+        console.error('[Game] 缺少 user_token 或 user_id，無法建立 WebSocket 連線');
+    }
     gameMode = localStorage.getItem('game_mode');
     mySpirit = Number(localStorage.getItem('my_spirit_value')) || 50;
     initialSpirit = mySpirit;
@@ -731,28 +753,25 @@ function initGameSetup() {
         if (opponentScoreEl) opponentScoreEl.textContent = '分數: 0';
         if (opponentAvatarEl) opponentAvatarEl.src = opponentStatusImg;
 
-        // ⭐ 對手分數同步
-        registerCallback('battle_update_score', (data) => {
-            if (!data || !data.payload) return;
+        // ⭐ 對戰中同步對方分數
+        registerCallback('battle_update', (msg) => {
+            const payload = msg.payload || {};
+            const scores = payload.scores || {};
 
-            const fromUserId = data.user_id;              // 發這個分數的人
-            const score = data.payload.score;
             const myId = Number(localStorage.getItem('user_id'));
+            const opponentId = Number(localStorage.getItem('opponent_user_id')); // 你在 battle_accept 時要存
 
-            if (fromUserId === myId) {
-                // 自己的分數（保險同步一次）
-                myGameScore = score;
-                if (myScoreValueEl) {
-                    myScoreValueEl.textContent = myGameScore;
-                }
-            } else {
-                // 對手的分數
-                opponentScore = score;
-                if (opponentScoreEl) {
-                    opponentScoreEl.textContent = `分數: ${opponentScore}`;
-                }
+            if (Number.isFinite(myId)) {
+                myGameScore = scores[myId] ?? myGameScore;
+                if (myScoreValueEl) myScoreValueEl.textContent = myGameScore;
+            }
+
+            if (Number.isFinite(opponentId)) {
+                opponentScore = scores[opponentId] ?? opponentScore;
+                if (opponentScoreEl) opponentScoreEl.textContent = `分數: ${opponentScore}`;
             }
         });
+
 
 
         // ⭐ 有人死掉 → 伺服器廣播 battle_force_end → 兩邊一起進入結算
@@ -873,46 +892,36 @@ function initGameSetup() {
             }
         });
 
-                // 2. 雙方最終成績，雙方都結束時一起結算
-        registerCallback('battle_result', (data) => {
-            try {
-                if (!data) return;
+        // 2. 雙方最終成績，雙方都結束時一起結算
+        registerCallback('battle_result', (msg) => {
+        const payload = msg.payload || {};
+        const myId = Number(localStorage.getItem('user_id'));
 
-                const payload = data.payload || data;
-                const myId = getMyUserId();
-                const battleId = localStorage.getItem('current_battle_id');
-                if (!battleId || payload.battle_id !== battleId) return;
+        const p1 = payload.player1_id;
+        const p2 = payload.player2_id;
+        const s1 = payload.player1_score;
+        const s2 = payload.player2_score;
 
-                const senderId = (typeof data.user_id === 'number')
-                    ? data.user_id
-                    : payload.user_id;
-                const score = payload.score || 0;
+        if (myId === p1) {
+            myGameScore = s1;
+            opponentScore = s2;
+        } else if (myId === p2) {
+            myGameScore = s2;
+            opponentScore = s1;
+        }
 
-                if (senderId === myId) {
-                    // 這一則是「伺服器認定的我的最終分數」
-                    myFinished = true;
-                    myGameScore = score;
-                } else {
-                    // 這一則是對手的最終分數
-                    opponentFinished = true;
-                    opponentScore = score;
-                    if (opponentScoreEl) {
-                        opponentScoreEl.textContent = `分數: ${opponentScore}`;
-                    }
-                }
+        // 更新畫面（右上 & 對戰資訊）
+        if (myScoreValueEl) myScoreValueEl.textContent = myGameScore;
+        if (opponentScoreEl) opponentScoreEl.textContent = `分數: ${opponentScore}`;
 
-                // ⚖️ 雙方都結束，才真的跳出結算畫面（兩邊同步）
-                if (myFinished && opponentFinished) {
-                    // 保險：有些情境下 gameRunning 已被設為 false
-                    if (!gameRunning) {
-                        gameRunning = true;
-                    }
-                    endGame();
-                }
-            } catch (err) {
-                console.error('battle_result handler error:', err);
-            }
-        });
+        // 🔥 強制結束遊戲 → 跳你的 endGame 結算字卡
+        if (window.game_state && window.game_state.forceEnd) {
+            window.game_state.forceEnd();
+        } else {
+            endGame();
+        }
+    });
+
 }
     // ===================== Solo Mode =====================
     else if (gameMode === 'solo') {
@@ -966,5 +975,6 @@ function initGameSetup() {
 
 // 啟動遊戲初始化
 document.addEventListener('DOMContentLoaded', initGameSetup);
+
 
 

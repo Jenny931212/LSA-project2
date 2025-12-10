@@ -233,6 +233,8 @@ async function endGame() {
     if (gameMode === 'solo') {
         const spiritGained = Math.floor(myGameScore / 100);
         newSpirit = Math.min(100, initialSpirit + spiritGained);
+        await updatePetSpirit(newSpirit);   // ✅ 寫回後端
+        localStorage.setItem('my_spirit_value', newSpirit); // 在動畫最後也會更新 localStorage
         
         finalMessage = `
             <div style="font-size: 1.2em; line-height: 1.8; text-align: center;">

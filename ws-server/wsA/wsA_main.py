@@ -717,13 +717,20 @@ async def handle_battle_result(message: dict) -> None:
         f"current_results={room.results}",
     )
 
-    # 2. 另一邊還沒送上來 → 先等
+    # 2. 如果另一邊還沒送上來，就直接把「目前的分數」當成他的最終分數
     if len(room.results) < 2:
-        return
+        # 判斷對手是誰
+        other_id = room.player2_id if user_id == room.player1_id else room.player1_id
+        if other_id not in room.results:
+            # 用目前 room.scores 中的分數，當作對手的最終分數
+            other_score = room.scores.get(other_id, 0)
+            room.results[other_id] = other_score
 
-    # 3. 兩邊都送來了 → 決定勝負
+    # 3. 兩邊的最終成績都在 room.results 裡了 → 決定勝負
     player1_id = room.player1_id
     player2_id = room.player2_id
+
+
     player1_score = room.results.get(player1_id, 0)
     player2_score = room.results.get(player2_id, 0)
 
@@ -777,6 +784,30 @@ async def handle_battle_result(message: dict) -> None:
 
     await manager.send_json(server_id, player1_id, result_msg)
     await manager.send_json(server_id, player2_id, result_msg)
+
+    # ⭐ 新增：順便送一個 battle_force_end，讓前端兩邊一起強制跳結算畫面
+    for pid in (player1_id, player2_id):
+        if pid == player1_id:
+            my_score = player1_score
+            opp_score = player2_score
+        else:
+            my_score = player2_score
+            opp_score = player1_score
+
+        force_msg = {
+            "type": "battle_force_end",
+            "server_id": server_id,
+            "user_id": pid,
+            "payload": {
+                "battle_id": battle_id,
+                "my_final_score": my_score,
+                "opponent_final_score": opp_score,
+                "winner_user_id": winner_user_id,
+                "player1_id": player1_id,
+                "player2_id": player2_id,
+            },
+        }
+        await manager.send_json(server_id, pid, force_msg)
 
     # 6. 房間收掉
     manager.finish_battle(battle_id)
@@ -947,3 +978,4 @@ async def websocket_endpoint(websocket: WebSocket):
                 "payload": {},
             }
             await manager.broadcast_in_server(server_id, player_left_msg, exclude=user_id)
+

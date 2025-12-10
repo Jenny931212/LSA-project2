@@ -7,7 +7,8 @@ import {
     startDinoGame, 
     stopDinoGame,
     jumpByExternalInput,
-    duckByExternalInput
+    duckByExternalInput,
+    setBirdsEnabled
 } from './dino_game.js';
 
 import { 
@@ -488,6 +489,12 @@ function clearBattleModeCountdown() {
 /** 啟動 Solo 模式遊戲 (根據選擇的輸入方式) */
 async function startSoloGame(mode) {
     inputMode = mode;
+
+    if (mode === 'rpi') {
+        setBirdsEnabled(false);
+    } else {
+        setBirdsEnabled(true);
+    }
     
     // 隱藏模式選擇畫面
     if (modeSelectScreenEl) modeSelectScreenEl.style.display = 'none';

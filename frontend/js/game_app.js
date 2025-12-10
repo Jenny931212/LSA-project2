@@ -8,7 +8,8 @@ import {
     stopDinoGame,
     jumpByExternalInput,
     duckByExternalInput,
-    setBirdsEnabled
+    setBirdsEnabled,
+    setGameSpeedScale
 } from './dino_game.js';
 
 import { 
@@ -491,9 +492,13 @@ async function startSoloGame(mode) {
     inputMode = mode;
 
     if (mode === 'rpi') {
+        // RPi 模式：沒有鳥，速度用原本 1.0（但因為姿態偵測影響，其實會體感更慢）
         setBirdsEnabled(false);
+        setGameSpeedScale(1.0);
     } else {
+        // 鍵盤模式：開鳥，但整體速度放慢，例如 0.7（你覺得還太快可以改 0.6、0.5）
         setBirdsEnabled(true);
+        setGameSpeedScale(0.7);
     }
     
     // 隱藏模式選擇畫面

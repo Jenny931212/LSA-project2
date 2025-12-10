@@ -5,11 +5,14 @@ let videoEl = null;
 let running = false;
 let lastHipY = null;
 
-// 簡單冷卻（避免一秒內觸發太多次）
+// 只剩下「跳」的冷卻時間
 let lastJumpTime = 0;
-let lastDuckTime = 0;
-const JUMP_COOLDOWN_MS = 400;
-const DUCK_COOLDOWN_MS = 400;
+
+// 🔧 靈敏度設定：可以之後再自己微調
+// 數字越小 → 越容易連續觸發
+const JUMP_COOLDOWN_MS = 250;   // 原本 400ms，改成 0.25 秒就可以再跳一次
+// 數字越小 → 身體抖一抖也會被當成跳
+const JUMP_THRESHOLD = 10;      // 原本 15，改成 10 比較敏感
 
 /**
  * 初始化 MoveNet 姿態偵測器
@@ -39,9 +42,9 @@ export async function initPoseDetector(videoElement) {
 }
 
 /**
- * 單一步驟：抓畫面 → 偵測姿勢 → 根據臀部高度變化判斷跳 / 蹲
+ * 單一步驟：抓畫面 → 偵測姿勢 → 根據臀部高度變化判斷「跳」
  */
-async function detectStep(onJump, onDuck) {
+async function detectStep(onJump) {
     if (!detector || !videoEl) return;
 
     const poses = await detector.estimatePoses(videoEl);
@@ -64,19 +67,14 @@ async function detectStep(onJump, onDuck) {
         const dy = y - lastHipY;   // 正：往下，負：往上
         const now = Date.now();
 
-        // 往上移動比較多 → 視為跳
-        if (dy < -15 && (now - lastJumpTime > JUMP_COOLDOWN_MS)) {
+        // ⭐ 只有「往上」而且移動量超過 JUMP_THRESHOLD，才視為跳
+        if (dy < -JUMP_THRESHOLD && (now - lastJumpTime > JUMP_COOLDOWN_MS)) {
             console.log("⏫ Jump detected, dy =", dy.toFixed(2));
             lastJumpTime = now;
             onJump && onJump();
         }
 
-        // 往下移動比較多 → 視為蹲
-        if (dy > 15 && (now - lastDuckTime > DUCK_COOLDOWN_MS)) {
-            console.log("⏬ Duck detected, dy =", dy.toFixed(2));
-            lastDuckTime = now;
-            onDuck && onDuck();
-        }
+        // ❌ 不再判斷蹲下（完全關掉 duck 偵測）
     }
 
     lastHipY = y;
@@ -85,9 +83,9 @@ async function detectStep(onJump, onDuck) {
 /**
  * 開始持續偵測
  * - onJump: 偵測到「跳」時呼叫
- * - onDuck: 偵測到「蹲」時呼叫
+ * - 你如果在別的地方多傳第二個參數，也會被忽略，不會壞掉
  */
-export function startPoseLoop(onJump, onDuck) {
+export function startPoseLoop(onJump /*, onDuckIgnored */) {
     if (!detector || !videoEl) {
         console.warn("❗ detector 或 video 還沒準備好，無法啟動 pose loop");
         return;
@@ -99,7 +97,7 @@ export function startPoseLoop(onJump, onDuck) {
     async function loop() {
         if (!running) return;
         try {
-            await detectStep(onJump, onDuck);
+            await detectStep(onJump);
         } catch (err) {
             console.error("偵測過程發生錯誤", err);
         }
@@ -113,4 +111,5 @@ export function startPoseLoop(onJump, onDuck) {
 export function stopPoseLoop() {
     running = false;
     lastHipY = null;
+    lastJumpTime = 0;
 }

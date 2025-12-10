@@ -1,4 +1,3 @@
-// frontend/js/dino_game.js
 
 // 取得 canvas
 const canvas = document.getElementById('game-canvas');

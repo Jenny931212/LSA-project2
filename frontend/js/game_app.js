@@ -688,8 +688,6 @@ window.game_state = {
         }
     },
 
-        }
-    },
     // ⭐ 新增 forceEnd 函數，用於碰撞時強制結束
     forceEnd: () => {
         if (gameRunning) {

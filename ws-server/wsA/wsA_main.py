@@ -1,4 +1,5 @@
-# ws-server/wsA/main.py
+# ws-server/wsA/main.pyupdate_msg = {
+    "type": 
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware

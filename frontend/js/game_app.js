@@ -734,19 +734,31 @@ function initGameSetup() {
             }, 1000);
         }
 
+        // 綁定兩個模式按鈕（PK 版）👉 只記錄選擇，不直接開遊戲
         if (rpiModeBtn) {
-            rpiModeBtn.onclick = () => startBattleWithMode('rpi');
+            rpiModeBtn.onclick = () => {
+                inputMode = 'rpi';
+                if (gamePetMessageEl) {
+                    gamePetMessageEl.textContent = '已選擇「樹莓派模式」，請等待倒數結束後開始對戰！';
+                }
+            };
         }
         if (keyboardModeBtn) {
-            keyboardModeBtn.onclick = () => startBattleWithMode('keyboard');
+            keyboardModeBtn.onclick = () => {
+                inputMode = 'keyboard';
+                if (gamePetMessageEl) {
+                    gamePetMessageEl.textContent = '已選擇「鍵盤模式」，請等待倒數結束後開始對戰！';
+                }
+            };
         }
 
-        // 5 秒內沒選就預設鍵盤
+
+        // 滿 5 秒才開始：有選就用玩家選的，沒選就預設鍵盤
         battleModeSelectTimer = setTimeout(() => {
-            if (!inputMode) {
-                startBattleWithMode('keyboard');
-            }
+            const modeToStart = inputMode || 'keyboard';
+            startBattleWithMode(modeToStart);
         }, BATTLE_MODE_SELECT_SECONDS * 1000);
+
 
         // ==================================================
         // ⭐ WebSocket 對戰事件處理

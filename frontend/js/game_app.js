@@ -231,31 +231,33 @@ async function endGame() {
 
     // ================= Solo 模式：體力加成 =================
     if (gameMode === 'solo') {
-        const spiritGained = Math.floor(myGameScore / 100);
-        newSpirit = Math.min(100, initialSpirit + spiritGained);
-        await updatePetSpirit(newSpirit);   // ✅ 寫回後端
-        localStorage.setItem('my_spirit_value', newSpirit); // 在動畫最後也會更新 localStorage
-        
-        finalMessage = `
-            <div style="font-size: 1.2em; line-height: 1.8; text-align: center;">
-                🎉 訓練完成！<br>
-                您獲得 <span id="animated-score-value" style="font-weight: bold; color: ${SCORE_COLOR}; font-size: 1.8em;">0</span> 分，換算成體力值為 ${spiritGained} 點。<br>
-                <hr style="border-top: 2px solid var(--pixel-black); width: 80%; margin: 15px auto;">
-                您現在的體力值為: 
-                <span id="animated-spirit-value" style="font-weight: bold; color: ${SPIRIT_COLOR}; font-size: 1.8em;">
-                    ${Math.floor(initialSpirit)}/100 
-                </span>
-            </div>
-        `; 
-        
-        finalPetImg = getSpiritInfo(newSpirit).statusImg;
-        try {
-            await updatePetSpirit(newSpirit);
-            console.log('[SOLO] 已將體力值更新到後端：', newSpirit);
-        } catch (err) {
-            console.error('[SOLO] 更新後端體力值失敗：', err);
-        }
-    } 
+    const spiritGained = Math.floor(myGameScore / 100);
+    newSpirit = Math.min(100, initialSpirit + spiritGained);
+
+    // 先更新後端
+    try {
+        await updatePetSpirit(newSpirit);
+        console.log('[SOLO] 已將體力值更新到後端：', newSpirit);
+    } catch (err) {
+        console.error('[SOLO] 更新後端體力值失敗：', err);
+    }
+
+    // 文字顯示用 newSpirit
+    finalMessage = `
+        <div style="font-size: 1.2em; line-height: 1.8; text-align: center;">
+            🎉 訓練完成！<br>
+            您獲得 <span id="animated-score-value" style="font-weight: bold; color: ${SCORE_COLOR}; font-size: 1.8em;">0</span> 分，換算成體力值為 ${spiritGained} 點。<br>
+            <hr style="border-top: 2px solid var(--pixel-black); width: 80%; margin: 15px auto;">
+            您現在的體力值為: 
+            <span id="animated-spirit-value" style="font-weight: bold; color: ${SPIRIT_COLOR}; font-size: 1.8em;">
+                ${Math.floor(newSpirit)}/100
+            </span>
+        </div>
+    `; 
+    
+    finalPetImg = getSpiritInfo(newSpirit).statusImg;
+    }
+
     // ================= Battle 模式：勝負判定 =================
     else if (gameMode === 'battle') {
         let resultText;
@@ -287,14 +289,14 @@ async function endGame() {
         // ⭐ 把本機結果送給 wsA（只送一次，避免接到廣播又再送）
         const battleId = localStorage.getItem('current_battle_id');
         if (battleId && !sentBattleResult) {
-            sendMessage('game_end', {
-                battle_id: battleId,
-                final_score: myGameScore,
-                result: battleResult
-            });
-            sentBattleResult = true;
+        // ✅ 改成 battle_result，payload 帶 battle_id + score
+        sendMessage('battle_result', {
+            battle_id: battleId,
+            score: myGameScore
+        });
+        sentBattleResult = true;
         }
-
+    
         if (opponentStatusEl) {
             opponentStatusEl.style.display = 'none';
         }
@@ -751,59 +753,78 @@ function initGameSetup() {
         // ==================================================
 
         // 1. 即時接收對手分數
-        registerCallback('battle_update', (payload) => {
+        registerCallback('battle_update', (msg) => {
             try {
-                if (!payload) return;
-                const myId = Number(localStorage.getItem('my_user_id')) || 0;
+                if (!msg || !msg.payload) return;
+                const payload = msg.payload;
+        
+                const myId = Number(localStorage.getItem('user_id')) || 0;
                 const battleId = localStorage.getItem('current_battle_id');
-
                 if (!battleId || payload.battle_id !== battleId) return;
-
-                if (payload.user_id && payload.user_id !== myId) {
-                    opponentScore = payload.score || 0;
-                    if (opponentScoreEl) {
-                        opponentScoreEl.textContent = `分數: ${opponentScore}`;
+        
+                const scores = payload.scores || {};
+                let oppScore = 0;
+        
+                // 從 scores 裡把「不是我的那個」當對手分數
+                Object.entries(scores).forEach(([uid, s]) => {
+                    const uidNum = Number(uid);
+                    if (uidNum !== myId) {
+                        oppScore = Number(s) || 0;
                     }
+                });
+        
+                opponentScore = oppScore;
+                if (opponentScoreEl) {
+                    opponentScoreEl.textContent = `分數: ${opponentScore}`;
                 }
+        
             } catch (err) {
                 console.error('battle_update handler error:', err);
             }
         });
 
         // 2. 雙方最終成績，雙方都結束時一起結算
-        registerCallback('battle_result', (payload) => {
-            try {
-                if (!payload) return;
-                const myId = Number(localStorage.getItem('my_user_id')) || 0;
-                const battleId = localStorage.getItem('current_battle_id');
-                if (!battleId || payload.battle_id !== battleId) return;
-
-                const senderId = payload.user_id;
-                const score = payload.score || 0;
-
-                if (senderId === myId) {
-                    myFinished = true;
-                    myGameScore = score;
-                } else {
-                    opponentFinished = true;
-                    opponentScore = score;
-                    if (opponentScoreEl) {
-                        opponentScoreEl.textContent = `分數: ${opponentScore}`;
-                    }
-                }
-
-                if (myFinished && opponentFinished) {
-                    if (!gameRunning) {
-                        gameRunning = true;
-                    }
-                    endGame();
-                }
-            } catch (err) {
-                console.error('battle_result handler error:', err);
+        registerCallback('battle_result', (msg) => {
+        try {
+            if (!msg || !msg.payload) return;
+            const payload = msg.payload;
+    
+            const myId = Number(localStorage.getItem('user_id')) || 0;
+            const battleId = localStorage.getItem('current_battle_id');
+            if (!battleId || payload.battle_id !== battleId) return;
+    
+            const p1 = Number(payload.player1_id);
+            const p2 = Number(payload.player2_id);
+            const s1 = Number(payload.player1_score) || 0;
+            const s2 = Number(payload.player2_score) || 0;
+    
+            // 決定哪個是我的分數、哪個是對手
+            if (myId === p1) {
+                myGameScore = s1;
+                opponentScore = s2;
+            } else if (myId === p2) {
+                myGameScore = s2;
+                opponentScore = s1;
+            } else {
+                // 理論上不會發生，但保險
+                console.warn('battle_result: 找不到對應的 myId，略過');
+                return;
             }
-        });
+    
+            myFinished = true;
+            opponentFinished = true;
+    
+            // 這時候雙方都已經有最終分數，可以直接結算畫面
+            if (!gameRunning) {
+                gameRunning = true;
+            }
+            endGame();
+    
+        } catch (err) {
+            console.error('battle_result handler error:', err);
+        }
+    });
 
-    }
     // ===================== Solo Mode =====================
     else if (gameMode === 'solo') {
         if (dinoPanelTitleEl) dinoPanelTitleEl.textContent = '🏃 體力補充區';

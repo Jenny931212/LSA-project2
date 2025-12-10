@@ -1,7 +1,8 @@
 // frontend/js/game_app.js (PK 對戰 + Solo + 鏡頭/鍵盤模式 最終修正版)
 
 import { getPetStatus, updatePetSpirit } from './api_client.js';
-import { sendMessage, registerCallback } from './websocket_client.js';
+//import { sendMessage, registerCallback } from './websocket_client.js';
+import { initWebSocket, sendMessage, registerCallback } from './websocket_client.js';
 import { 
     handleKeyboardInput, 
     startDinoGame, 
@@ -684,6 +685,12 @@ window.game_state = {
 // 6. 初始化：依遊戲模式設定畫面 + WebSocket 事件
 // ======================================================
 function initGameSetup() {
+    // ⭐ 先連 WebSocket（game.html 也是新的一頁，要自己連）
+    const token = localStorage.getItem('user_token');
+    const userId = localStorage.getItem('user_id');
+
+    // 這裡 initialData 可以先給空就好
+    initWebSocket(token, userId, {});
     gameMode = localStorage.getItem('game_mode');
     mySpirit = Number(localStorage.getItem('my_spirit_value')) || 50;
     initialSpirit = mySpirit;

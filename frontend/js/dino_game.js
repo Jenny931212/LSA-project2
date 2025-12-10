@@ -108,6 +108,14 @@ birdImage.onload = () => {
     birdAspect = birdImage.naturalWidth / birdImage.naturalHeight;
 };
 
+// 控制是否產生空中鳥（由外部決定：RPI 模式關掉，鍵盤模式打開）
+let birdsEnabled = true;
+
+// 外部用來設定是否產生鳥
+export function setBirdsEnabled(enabled) {
+    birdsEnabled = !!enabled;
+}
+
 // 障礙物
 let obstacles = [];
 let animationFrameId = null;
@@ -122,8 +130,8 @@ const MAX_OBSTACLES_ON_SCREEN = 3;
 function createObstacle() {
     const dinoH = DINO_HEIGHT || 60; // 保險用
 
-    // 30% 機率生成鳥，其他是仙人掌
-    const isBird = Math.random() < 0.3;
+    // 只有在 birdsEnabled = true 時才會有鳥；否則全部都是仙人掌
+    const isBird = birdsEnabled && Math.random() < 0.3;
 
     if (isBird) {
         // 🐦 鳥：變大 + 調低，站立一定會撞，蹲下才會躲過

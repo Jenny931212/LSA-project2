@@ -1,6 +1,3 @@
-# ws-server/wsA/main.pyupdate_msg = {
-    "type": 
-
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Tuple, List, Set
@@ -39,10 +36,13 @@ class BattleRoom:
     server_id: str
     player1_id: int
     player2_id: int
+    # 遊戲中即時更新用
     scores: Dict[int, int] = field(default_factory=dict)
+    # waiting / running
     state: str = "waiting"
+    # 雙方 ready 狀態
     ready: Dict[int, bool] = field(default_factory=dict)
-    # ⭐ 新增：儲存每位玩家「遊戲結束時」送來的最終分數
+    # ⭐ 新增：雙方送上來的「最終分數」
     results: Dict[int, int] = field(default_factory=dict)
 
 
@@ -55,6 +55,7 @@ class ConnectionManager:
         self.chat_approved_pairs: Set[Tuple[int, int]] = set()
         self.last_position_broadcast: Dict[UserKey, float] = {}
 
+    # ------------------ 基本連線管理 ------------------ #
     def connect(self, server_id: str, user_id: int, websocket: WebSocket) -> None:
         key: UserKey = (server_id, user_id)
         self.active_connections[key] = websocket
@@ -104,6 +105,7 @@ class ConnectionManager:
                 log("SEND_ERROR", f"server={sid}, user_id={uid} 傳送失敗，略過")
                 continue
 
+    # ------------------ 大廳玩家資訊 ------------------ #
     def upsert_lobby_player(self, server_id: str, user_id: int, info: dict) -> None:
         if server_id not in self.lobby_player_states:
             self.lobby_player_states[server_id] = {}
@@ -123,6 +125,7 @@ class ConnectionManager:
             return None
         return int(state.get("energy", 0))
 
+    # ------------------ 聊天配對 ------------------ #
     def approve_chat_pair(self, user1_id: int, user2_id: int) -> None:
         pair = tuple(sorted((user1_id, user2_id)))
         self.chat_approved_pairs.add(pair)
@@ -132,6 +135,7 @@ class ConnectionManager:
         pair = tuple(sorted((from_user_id, to_user_id)))
         return pair in self.chat_approved_pairs
 
+    # ------------------ 對戰房間 ------------------ #
     def create_battle(self, server_id: str, player1_id: int, player2_id: int) -> BattleRoom:
         ts = int(time.time() * 1000)
         battle_id = f"{min(player1_id, player2_id)}_{max(player1_id, player2_id)}_{ts}"
@@ -169,6 +173,10 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# =========================================================
+# 事件處理：大廳 / 位置 / 聊天
+# =========================================================
+
 
 async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
     server_id = message.get("server_id", "A")
@@ -182,7 +190,7 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
     pet_name = payload.get("pet_name") or "MyPet"
     energy = int(payload.get("energy", 100))
     status = payload.get("status") or "ACTIVE"
-    # [修改] 這裡讀取前端送來的分數，存起來
+    # ⭐ 大廳裡也有紀錄積分
     score = int(payload.get("score", 0))
 
     x = payload.get("x")
@@ -198,19 +206,17 @@ async def handle_join_lobby(message: dict, websocket: WebSocket) -> None:
         "pet_name": pet_name,
         "energy": energy,
         "status": status,
-        "score": score,  # [修改] 儲存分數
+        "score": score,
         "x": float(x),
         "y": float(y),
     }
     manager.upsert_lobby_player(server_id, user_id, player_info)
 
-    # ★ 新增：方便你看後端實際記錄的座標
     log(
         "JOIN_LOBBY_POS",
         f"server={server_id}, user_id={user_id}, x={player_info['x']}, y={player_info['y']}",
     )
 
-    # ✅ 再從 manager 拿完整 state（確保和 server 內部一致）
     full_state = manager.get_player_state(server_id, user_id)
 
     players = manager.get_lobby_players(server_id)
@@ -250,7 +256,7 @@ async def handle_pet_state_update(message: dict) -> None:
         state["energy"] = int(payload["energy"])
     if "status" in payload:
         state["status"] = str(payload["status"])
-    if "score" in payload: # [修改] 允許更新分數
+    if "score" in payload:
         state["score"] = int(payload["score"])
     if "x" in payload:
         state["x"] = float(payload["x"])
@@ -475,6 +481,10 @@ async def handle_chat_message(message: dict) -> None:
     await manager.send_json(server_id, to_user_id, chat_msg)
 
 
+# =========================================================
+# 對戰流程：邀請 / 接受 / ready / 更新分數 / 最後結果
+# =========================================================
+
 async def handle_battle_invite(message: dict) -> None:
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
@@ -599,7 +609,9 @@ async def handle_battle_accept(message: dict) -> None:
         }
         await manager.send_json(server_id, pid, msg)
 
+
 async def handle_battle_ready(message: dict) -> None:
+    """雙方在 game.html 點『開始』 → 送 battle_ready，兩邊都 ready 後送 battle_go。"""
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -614,11 +626,9 @@ async def handle_battle_ready(message: dict) -> None:
         log("BATTLE_READY_ERROR", "battle_id 不存在")
         return
 
-    # 標記該玩家已準備
     room.ready[user_id] = True
     log("BATTLE_READY", f"user {user_id} 已準備好 battle {battle_id}")
 
-    # 檢查雙方是否都 ready
     if all(room.ready.values()):
         log("BATTLE_GO", f"battle {battle_id} 雙方都準備好了，發送 battle_go")
 
@@ -676,6 +686,10 @@ async def handle_battle_update(message: dict) -> None:
 
 
 async def handle_battle_result(message: dict) -> None:
+    """
+    新版：每個玩家結束遊戲時，送上自己的最終分數。
+    等到 room.results 裡有 2 個人，就一起決定勝負、加積分、廣播結果。
+    """
     server_id = message.get("server_id", "A")
     user_id = int(message.get("user_id"))
     payload = message.get("payload") or {}
@@ -686,7 +700,6 @@ async def handle_battle_result(message: dict) -> None:
         return
     battle_id = str(battle_id_raw)
 
-    # ⭐ 新版協議：只收這個玩家自己的最終分數
     score = int(payload.get("score", 0))
 
     room = manager.get_battle(battle_id)
@@ -694,9 +707,9 @@ async def handle_battle_result(message: dict) -> None:
         log("BATTLE_RESULT", f"battle_id={battle_id} 不存在，略過")
         return
 
-    # 1. 記錄這個玩家的結果
+    # 1. 記錄這個玩家的最終成績
     room.results[user_id] = score
-    room.scores[user_id] = score  # 順便更新 scores，之後要用也可以
+    room.scores[user_id] = score
 
     log(
         "BATTLE_RESULT_PARTIAL",
@@ -704,7 +717,7 @@ async def handle_battle_result(message: dict) -> None:
         f"current_results={room.results}",
     )
 
-    # 2. 如果另一邊還沒結束 → 等他
+    # 2. 另一邊還沒送上來 → 先等
     if len(room.results) < 2:
         return
 
@@ -719,7 +732,7 @@ async def handle_battle_result(message: dict) -> None:
     elif player2_score > player1_score:
         winner_user_id = player2_id
     else:
-        winner_user_id = 0  # 0 代表平手
+        winner_user_id = 0  # 平手
 
     log(
         "BATTLE_RESULT_FINAL",
@@ -727,7 +740,7 @@ async def handle_battle_result(message: dict) -> None:
         f"p2={player2_id} score={player2_score}, winner={winner_user_id}",
     )
 
-    # 4. 幫贏家加 1 積分（只有有贏家才加，平手不加）
+    # 4. 幫贏家加 1 積分（平手不加）
     if winner_user_id > 0:
         winner_state = manager.get_player_state(server_id, winner_user_id)
         if winner_state:
@@ -736,7 +749,7 @@ async def handle_battle_result(message: dict) -> None:
             winner_state["score"] = new_score
             manager.upsert_lobby_player(server_id, winner_user_id, winner_state)
 
-            # 廣播一次 pet_state_update，讓所有人在排行榜看到積分更新
+            # 廣播一次 pet_state_update，排行榜就會更新
             update_msg = {
                 "type": "pet_state_update",
                 "server_id": server_id,
@@ -747,11 +760,11 @@ async def handle_battle_result(message: dict) -> None:
             }
             await manager.broadcast_in_server(server_id, update_msg)
 
-    # 5. 把最終結果通知雙方（前端如果要用 ws 結果再顯示一次可以用）
+    # 5. 告訴兩邊最終結果（前端也有自己的 endGame 動畫）
     result_msg = {
         "type": "battle_result",
         "server_id": server_id,
-        "user_id": user_id,  # 誰收到都沒差，payload 裡有全部
+        "user_id": user_id,
         "payload": {
             "battle_id": battle_id,
             "winner_user_id": winner_user_id,
@@ -765,16 +778,20 @@ async def handle_battle_result(message: dict) -> None:
     await manager.send_json(server_id, player1_id, result_msg)
     await manager.send_json(server_id, player2_id, result_msg)
 
+    # 6. 房間收掉
     manager.finish_battle(battle_id)
 
 
 async def handle_battle_disconnect(server_id: str, user_id: int) -> None:
+    """
+    某一邊在對戰中突然斷線時的處理：
+    - waiting：只是大家剛跳轉、還沒正式開始 → 直接收房間，不判輸贏。
+    - running：才會把斷線方判定為落敗，加積分給另外一方。
+    """
     room = manager.find_battle_by_user(server_id, user_id)
     if room is None:
         return
 
-    # ⭐ 1. 如果這場戰鬥還在 waiting（剛配對成功、大家正在跳轉 game.html）
-    #    → 不要判輸贏，只是把房間清掉。
     if room.state == "waiting":
         log(
             "BATTLE_DISCONNECT_WAITING",
@@ -784,7 +801,6 @@ async def handle_battle_disconnect(server_id: str, user_id: int) -> None:
         manager.finish_battle(room.battle_id)
         return
 
-    # ⭐ 2. 只有在「戰鬥已經實際在進行中」的狀態，才考慮把斷線方判定為落敗
     if room.state != "running":
         log(
             "BATTLE_DISCONNECT",
@@ -794,7 +810,6 @@ async def handle_battle_disconnect(server_id: str, user_id: int) -> None:
         manager.finish_battle(room.battle_id)
         return
 
-    # ⭐ 3. 真的在 running 中斷線 → 這裡才當作強制落敗
     if user_id == room.player1_id:
         winner_user_id = room.player2_id
     else:
@@ -829,6 +844,9 @@ async def handle_battle_disconnect(server_id: str, user_id: int) -> None:
     manager.finish_battle(room.battle_id)
 
 
+# =========================================================
+# FastAPI 路由：health_check + WebSocket 主入口
+# =========================================================
 
 @app.get("/")
 async def health_check():
@@ -846,7 +864,6 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             raw = await websocket.receive_text()
-            # log("WS_RECV_RAW", raw)
 
             try:
                 message = json.loads(raw)

@@ -3,12 +3,25 @@
 import os
 import sys
 
-# 取得 backend 的根目錄（這支檔案在 backend/cron/ 底下，所以往上一層）
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# ================================
+# 1. 讓 Python 找得到 backend/app
+# ================================
+# 這支檔案在 backend/cron/ 底下
+THIS_FILE = os.path.abspath(__file__)
+CRON_DIR = os.path.dirname(THIS_FILE)
+BASE_DIR = os.path.dirname(CRON_DIR)        # → /home/jiayen/Desktop/pet_project/backend
 
-# 確認 backend 在 sys.path 裡，讓 Python 找得到 app 這個 package
+# 確保 backend 在 sys.path 裡，讓 Python 找得到 app 這個 package
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
+# （除錯用：你可以先暫時打開這行看一下 cron 實際的 sys.path）
+# print("[DEBUG] sys.path =", sys.path)
+
+# ================================
+# 2. 從 app.main 匯入需要的東西
+# ================================
+from app.main import SessionLocal, Pet, energy_to_status
 
 
 """
@@ -16,16 +29,7 @@ if BASE_DIR not in sys.path:
 - 所有寵物 energy -= 5（不能 < 0）
 - 若這次「剛好變成 0」（原本 > 0，現在 = 0）→ score -= 1
 - 更新 status = SLEEPING / TIRED / ACTIVE
-
-請放在 backend 專案的 cron/ 資料夾底下：
-backend/
-  app/
-    main.py
-  cron/
-    energy_decay.py
 """
-
-from app.main import SessionLocal, Pet, energy_to_status
 
 
 def run_energy_decay():

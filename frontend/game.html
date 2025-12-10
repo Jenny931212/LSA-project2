@@ -239,6 +239,25 @@
             align-items: center;
         }
 
+        /* ⭐ 按鈕按下去瞬間的效果（不改 JS 就只能做到這個程度） */
+        #rpi-mode-btn:active,
+        #keyboard-mode-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0 var(--pixel-black);
+            filter: brightness(1.1);
+            border-color: var(--pixel-orange);
+        }
+        
+        /* ⭐ 按鈕被聚焦（點過後）的效果 */
+        #rpi-mode-btn:focus,
+        #keyboard-mode-btn:focus {
+            outline: none;
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0 var(--pixel-black);
+            border-color: var(--pixel-orange);
+        }
+
+
     </style>
 </head>
 <body>
